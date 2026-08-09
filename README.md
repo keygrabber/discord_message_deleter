@@ -10,5 +10,5 @@ sudo dnf install python3-tkinter
 **After that**
 pip install -r requirements.txt --break-system-packages
 
-**Windows**
+# Windows
 pip install -r requirements.txt
