@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple
 import customtkinter as ctk
 
 from . import __version__
+from .anim import count_step, ease_out, lerp_color
 from .core import Archive, Filters, Runner
 from .services import SERVICES
 
@@ -31,6 +32,9 @@ DANGER = "#da373c"
 DANGER_HOVER = "#a12829"
 WARN = "#f0b232"
 STOP_IDLE = "#3b3d44"
+FLASH = "#4a4f9a"  # counter highlight when a value changes
+
+FRAME_MS = 16  # animation frame interval (~60 fps)
 
 FONT = "Segoe UI" if sys.platform == "win32" else None
 MONO = "Consolas" if sys.platform == "win32" else "DejaVu Sans Mono"
@@ -78,6 +82,88 @@ def make_switch(parent, text: str, variable, command=None) -> ctk.CTkSwitch:
                          button_color="#ffffff", button_hover_color="#e3e5e8")
 
 
+class Animator:
+    """Runs keyed tweens and repeating jobs on the Tk event loop (main thread only)."""
+
+    def __init__(self, root):
+        self.root = root
+        self.jobs: Dict[str, str] = {}
+
+    def run(self, key: str, ms: int, step, done=None) -> None:
+        """Call step(t) for t in (0, 1] over `ms` milliseconds; a new run with the same key replaces the old one."""
+        self.cancel(key)
+        frames = max(1, ms // FRAME_MS)
+        count = 0
+
+        def tick():
+            nonlocal count
+            count += 1
+            step(count / frames)
+            if count < frames:
+                self.jobs[key] = self.root.after(FRAME_MS, tick)
+            else:
+                self.jobs.pop(key, None)
+                if done:
+                    done()
+
+        self.jobs[key] = self.root.after(FRAME_MS, tick)
+
+    def every(self, key: str, ms: int, fn) -> None:
+        """Call fn() now and then every `ms` milliseconds until cancelled."""
+        self.cancel(key)
+
+        def tick():
+            fn()
+            self.jobs[key] = self.root.after(ms, tick)
+
+        tick()
+
+    def cancel(self, key: str) -> None:
+        """Stop one job if it is pending."""
+        job = self.jobs.pop(key, None)
+        if job is not None:
+            self.root.after_cancel(job)
+
+    def cancel_all(self) -> None:
+        """Stop everything (call before destroying the window)."""
+        for key in list(self.jobs):
+            self.cancel(key)
+
+
+class Ring(tk.Canvas):
+    """Circular progress indicator with the percentage in the middle."""
+
+    SIZE = 96
+    THICK = 9
+
+    def __init__(self, master, anim: Animator):
+        super().__init__(master, width=self.SIZE, height=self.SIZE, bg=CARD, highlightthickness=0)
+        self.anim = anim
+        self.value = 0.0
+        pad = self.THICK / 2 + 2
+        box = (pad, pad, self.SIZE - pad, self.SIZE - pad)
+        self.create_oval(*box, outline=INPUT, width=self.THICK)
+        self.arc = self.create_arc(*box, start=90, extent=0, style="arc", outline=ACCENT,
+                                   width=self.THICK)
+        self.label = self.create_text(self.SIZE / 2, self.SIZE / 2, text="0%", fill=TEXT, font=F(17, True))
+
+    def set(self, fraction: float, instant: bool = False) -> None:
+        """Move the ring to `fraction` (0..1), easing from where it is now."""
+        end = max(0.0, min(1.0, fraction))
+        start = self.value
+        if instant or start == end:
+            self.anim.cancel("ring")
+            self._draw(end)
+            return
+        self.anim.run("ring", 320, lambda t: self._draw(start + (end - start) * ease_out(t)))
+
+    def _draw(self, value: float) -> None:
+        """Paint the arc and label for `value` (0..1)."""
+        self.value = value
+        self.itemconfigure(self.arc, extent=-359.9 * value, outline=GOOD if value >= 1 else ACCENT)
+        self.itemconfigure(self.label, text=f"{round(value * 100)}%")
+
+
 def caption(parent, text: str, pady=(12, 6)) -> ctk.CTkLabel:
     """Small grey label above a control."""
     label = ctk.CTkLabel(parent, text=text, font=F(12, True), text_color=SUBTEXT)
@@ -102,18 +188,28 @@ def make_card(parent, title: str, subtitle: str = "") -> ctk.CTkFrame:
 class Chip(ctk.CTkButton):
     """A pill-shaped toggle button (on = accent colour)."""
 
-    def __init__(self, master, text: str):
+    def __init__(self, master, text: str, anim: Animator):
         self.var = tk.BooleanVar(value=False)
+        self.anim = anim
+        self._look = (INPUT, BORDER, SUBTEXT)  # fill, border, text currently shown
         super().__init__(master, text=text, height=32, width=0, corner_radius=16, border_width=1,
                          font=F(12, True), command=self._toggle, fg_color=INPUT,
                          hover_color=HOVER, border_color=BORDER, text_color=SUBTEXT)
 
     def _toggle(self) -> None:
-        """Flip the state and repaint."""
+        """Flip the state and fade to the new colours."""
         self.var.set(not self.var.get())
         on = self.var.get()
-        self.configure(fg_color=ACCENT if on else INPUT, hover_color=ACCENT_HOVER if on else HOVER,
-                       border_color=ACCENT if on else BORDER, text_color="#ffffff" if on else SUBTEXT)
+        start = self._look
+        end = (ACCENT, ACCENT, "#ffffff") if on else (INPUT, BORDER, SUBTEXT)
+        self.configure(hover_color=ACCENT_HOVER if on else HOVER)
+
+        def step(t):
+            self._look = tuple(lerp_color(a, b, ease_out(t)) for a, b in zip(start, end))
+            self.configure(fg_color=self._look[0], border_color=self._look[1],
+                           text_color=self._look[2])
+
+        self.anim.run(f"chip-{id(self)}", 160, step)
 
     def get(self) -> bool:
         """Whether the chip is switched on."""
@@ -322,13 +418,34 @@ class App:
         self.run_mode = tk.StringVar(value="preview")
         self.panels: List[ServicePanel] = []
         self.nav_buttons: List[ctk.CTkButton] = []
+        self.nav_marks: List[ctk.CTkFrame] = []
         self.current = -1
+        self.anim = Animator(root)
+        self.stat_shown = {"found": 0, "deleted": 0, "failed": 0}
+        self.log_empty = True
+        self._start_color = ACCENT
+        self._border_color = CARD
 
         root.grid_columnconfigure(1, weight=1)
         root.grid_rowconfigure(0, weight=1)
         self._build_sidebar()
         self._build_content()
         self.show_service(0)
+        root.protocol("WM_DELETE_WINDOW", self._close)
+        self._fade_in()
+
+    def _fade_in(self) -> None:
+        """Fade the window in; skipped silently where the window manager has no alpha."""
+        try:
+            self.root.attributes("-alpha", 0.0)
+        except tk.TclError:
+            return
+        self.anim.run("fade", 240, lambda t: self.root.attributes("-alpha", ease_out(t)))
+
+    def _close(self) -> None:
+        """Stop all animation timers, then close the window."""
+        self.anim.cancel_all()
+        self.root.destroy()
 
     def _build_sidebar(self) -> None:
         """Left navigation: logo, one button per service, warning card."""
@@ -349,11 +466,17 @@ class App:
         ctk.CTkLabel(side, text="SERVICES", font=F(11, True), text_color=MUTED).pack(
             anchor="w", padx=24, pady=(0, 6))
         for i, cls in enumerate(SERVICES):
-            btn = ctk.CTkButton(side, text=f"   {cls.name}", anchor="w", height=42, corner_radius=10,
-                                font=F(14, True), fg_color="transparent", hover_color=HOVER,
-                                text_color=TEXT, command=lambda i=i: self.show_service(i))
-            btn.pack(fill="x", padx=14, pady=2)
+            row = ctk.CTkFrame(side, fg_color="transparent")
+            row.pack(fill="x", padx=(6, 14), pady=2)
+            mark = ctk.CTkFrame(row, width=4, height=24, corner_radius=2, fg_color="transparent")
+            mark.pack(side="left", padx=(0, 4))
+            btn = ctk.CTkButton(row, text=f"  ◆   {cls.name}", anchor="w", height=42,
+                                corner_radius=10, font=F(14, True), fg_color="transparent",
+                                hover_color=HOVER, text_color=TEXT,
+                                command=lambda i=i: self.show_service(i))
+            btn.pack(side="left", fill="x", expand=True)
             self.nav_buttons.append(btn)
+            self.nav_marks.append(mark)
 
         ctk.CTkLabel(side, text=f"v{__version__}  ·  open source", font=F(11),
                      text_color=MUTED).pack(side="bottom", anchor="w", padx=24, pady=(0, 20))
@@ -406,7 +529,7 @@ class App:
         row.pack(anchor="w")
         self.type_vars: Dict[str, Chip] = {}
         for tag, label in CONTENT_TYPES:
-            chip = Chip(row, label)
+            chip = Chip(row, label, self.anim)
             chip.pack(side="left", padx=(0, 8))
             self.type_vars[tag] = chip
 
@@ -428,7 +551,9 @@ class App:
 
     def _build_run_panel(self, content) -> None:
         """Right-hand panel: mode, start/stop, counters, progress and log."""
-        run = ctk.CTkFrame(content, fg_color=CARD, corner_radius=16, width=420)
+        run = ctk.CTkFrame(content, fg_color=CARD, corner_radius=16, width=420, border_width=2,
+                           border_color=CARD)
+        self.run_card = run
         run.grid(row=1, column=1, sticky="nsew")
         run.pack_propagate(False)
 
@@ -461,6 +586,7 @@ class App:
         stats.pack(fill="x", padx=22, pady=(18, 0))
         stats.grid_columnconfigure((0, 1, 2), weight=1, uniform="s")
         self.stat_values: Dict[str, ctk.CTkLabel] = {}
+        self.stat_cards: Dict[str, ctk.CTkFrame] = {}
         for col, (key, label, color) in enumerate((("found", "Found", TEXT), ("deleted", "Removed", GOOD),
                                                    ("failed", "Failed", "#ff7a7d"))):
             card = ctk.CTkFrame(stats, fg_color=INPUT, corner_radius=12)
@@ -469,13 +595,15 @@ class App:
             value.pack(pady=(10, 0))
             ctk.CTkLabel(card, text=label, font=F(11), text_color=MUTED).pack(pady=(0, 10))
             self.stat_values[key] = value
+            self.stat_cards[key] = card
 
-        self.bar = ctk.CTkProgressBar(run, height=10, corner_radius=5, progress_color=ACCENT,
-                                      fg_color=INPUT)
-        self.bar.set(0)
-        self.bar.pack(fill="x", padx=22, pady=(18, 4))
-        self.status = ctk.CTkLabel(run, text="Idle", font=F(12), text_color=MUTED)
-        self.status.pack(anchor="w", padx=22)
+        progress = ctk.CTkFrame(run, fg_color="transparent")
+        progress.pack(fill="x", padx=22, pady=(18, 0))
+        self.ring = Ring(progress, self.anim)
+        self.ring.pack(side="left")
+        self.status = ctk.CTkLabel(progress, text="Idle", font=F(13, True), text_color=MUTED,
+                                   wraplength=250, justify="left")
+        self.status.pack(side="left", padx=(18, 0))
 
         ctk.CTkLabel(run, text="Activity", font=F(12, True), text_color=SUBTEXT).pack(
             anchor="w", padx=22, pady=(14, 6))
@@ -485,6 +613,8 @@ class App:
         self.log_box.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         for tag, color in LOG_COLORS.items():
             self.log_box.tag_config(tag, foreground=color)
+        self.log_box.insert("end", "Nothing yet. Press 'Start preview' to see what would be removed.",
+                            "dim")
         self.log_box.configure(state="disabled")
 
     @staticmethod
@@ -512,25 +642,48 @@ class App:
         if self.current >= 0:
             self.panels[self.current].pack_forget()
             self.nav_buttons[self.current].configure(fg_color="transparent")
+            self.nav_marks[self.current].configure(fg_color="transparent")
         self.current = index
         self.panels[index].pack(fill="x")
-        self.nav_buttons[index].configure(fg_color=HOVER)
+        self.nav_marks[index].configure(fg_color=ACCENT)
+        self.anim.run(f"nav-{index}", 160, lambda t: self.nav_buttons[index].configure(
+            fg_color=lerp_color(SIDEBAR, HOVER, ease_out(t))))
         self.header.configure(text=SERVICES[index].name)
 
+    def _start_text(self) -> str:
+        """Idle caption of the start button for the current mode."""
+        return "Start preview" if self.run_mode.get() == "preview" else "Start deleting"
+
     def select_mode(self, value: str) -> None:
-        """Handle a mode switch: update state, hint text and the start button."""
+        """Handle a mode switch: update state, hint text, and fade the start button and card border."""
         self.run_mode.set(value)
         preview = value == "preview"
         self.mode_seg.set("Preview" if preview else "Deletion")
         self.mode_hint.configure(text=MODE_TEXT[value])
-        self.start_btn.configure(text="Start preview" if preview else "Start deleting",
-                                 fg_color=ACCENT if preview else DANGER,
-                                 hover_color=ACCENT_HOVER if preview else DANGER_HOVER)
+        self.start_btn.configure(hover_color=ACCENT_HOVER if preview else DANGER_HOVER)
+        if not self.running:
+            self.start_btn.configure(text=self._start_text())
+        fill_from, border_from = self._start_color, self._border_color
+        fill_to, border_to = (ACCENT, CARD) if preview else (DANGER, DANGER)
+
+        def step(t):
+            self._start_color = lerp_color(fill_from, fill_to, ease_out(t))
+            self._border_color = lerp_color(border_from, border_to, ease_out(t))
+            self.start_btn.configure(fg_color=self._start_color)
+            self.run_card.configure(border_color=self._border_color)
+
+        self.anim.run("mode", 220, step)
 
     def log(self, text: str) -> None:
-        """Append a line to the log; safe to call from the worker thread."""
+        """Append a timestamped line to the log; safe to call from the worker thread."""
+        stamp = datetime.now().strftime("%H:%M:%S")
+
         def _write():
             self.log_box.configure(state="normal")
+            if self.log_empty:
+                self.log_box.delete("1.0", "end")
+                self.log_empty = False
+            self.log_box.insert("end", stamp + "  ", "dim")
             self.log_box.insert("end", text + "\n", _log_tag(text))
             if int(self.log_box.index("end-1c").split(".")[0]) > LOG_LINES_MAX:
                 self.log_box.delete("1.0", f"{LOG_LINES_MAX // 5}.0")
@@ -538,15 +691,34 @@ class App:
             self.log_box.configure(state="disabled")
         self.root.after(0, _write)
 
-    def _set_stats(self, found: int, deleted: int, failed: int) -> None:
-        """Update the Found / Removed / Failed counters (main thread only)."""
+    def _set_stats(self, found: int, deleted: int, failed: int, instant: bool = False) -> None:
+        """Count the Found / Removed / Failed counters up to new values (main thread only)."""
         for key, value in (("found", found), ("deleted", deleted), ("failed", failed)):
-            self.stat_values[key].configure(text=str(value))
+            start = self.stat_shown[key]
+            label, card = self.stat_values[key], self.stat_cards[key]
+            if instant or start == value:
+                self.anim.cancel(f"stat-{key}")
+                self.stat_shown[key] = value
+                label.configure(text=str(value))
+                card.configure(fg_color=INPUT)
+                continue
+
+            def step(t, key=key, start=start, value=value, label=label, card=card):
+                self.stat_shown[key] = count_step(start, value, t)
+                label.configure(text=str(self.stat_shown[key]))
+                card.configure(fg_color=lerp_color(FLASH, INPUT, ease_out(t)))
+
+            self.anim.run(f"stat-{key}", 320, step)
 
     def _set_progress(self, done: int, total: int) -> None:
-        """Update the bar and status label (main thread only)."""
-        self.bar.set(done / total if total else 0)
+        """Update the ring and status label (main thread only)."""
+        self.ring.set(done / total if total else 0)
         self.status.configure(text=f"{done} of {total} processed")
+
+    def _dots(self) -> None:
+        """One tick of the 'Working...' animation on the start button and status."""
+        self._dot_count = (self._dot_count + 1) % 4
+        self.start_btn.configure(text="Working" + "." * self._dot_count)
 
     def _parse_filters(self) -> Filters:
         """Build Filters from the form; raises ValueError with a user-facing message."""
@@ -610,11 +782,14 @@ class App:
         self.running = True
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal", fg_color=DANGER)
-        self.bar.set(0)
-        self._set_stats(0, 0, 0)
-        self.status.configure(text="Working...")
+        self.ring.set(0, instant=True)
+        self._set_stats(0, 0, 0, instant=True)
+        self.status.configure(text="Working...", text_color=TEXT)
+        self._dot_count = 0
+        self.anim.every("dots", 400, self._dots)
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")
+        self.log_empty = False
         self.log_box.configure(state="disabled")
         threading.Thread(target=runner.run, daemon=True).start()
 
@@ -626,9 +801,10 @@ class App:
     def _finished(self) -> None:
         """Reset controls after the worker ends (main thread)."""
         self.running = False
-        self.start_btn.configure(state="normal")
+        self.anim.cancel("dots")
+        self.start_btn.configure(state="normal", text=self._start_text())
         self.stop_btn.configure(state="disabled", fg_color=STOP_IDLE)
-        self.status.configure(text="Idle")
+        self.status.configure(text="Idle", text_color=MUTED)
 
 
 def main() -> None:
