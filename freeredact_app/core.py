@@ -3,8 +3,10 @@
 Nothing in this module imports a GUI toolkit, so it can be tested headless.
 """
 
+import json
 import random
 import threading
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
@@ -192,6 +194,38 @@ class Service:
         raise NotImplementedError
 
 
+class Archive:
+    """Append-only JSON Lines file with one record per removed (or previewed) item.
+
+    Lets you keep a private local copy of what was deleted. The file is flushed
+    after every record so a crash or Stop never loses entries.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self.path, "a", encoding="utf-8")
+
+    def write(self, item: Item, action: str) -> None:
+        """Append one record describing `item` and what happened to it."""
+        record = {
+            "action": action,
+            "kind": item.kind,
+            "id": item.id,
+            "created": item.created.isoformat() if item.created else None,
+            "text": item.text,
+            "tags": sorted(item.tags),
+            "data": item.data,
+        }
+        self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._fh.flush()
+
+    def close(self) -> None:
+        """Close the file (safe to call twice)."""
+        if not self._fh.closed:
+            self._fh.close()
+
+
 class Runner:
     """Walks the service batch by batch; unless `dry_run`, deletes each matching item.
 
@@ -203,7 +237,8 @@ class Runner:
                  filters: Filters, dry_run: bool, delay: Tuple[float, float],
                  stop: threading.Event, log: Callable[[str], None],
                  progress: Callable[[int, int], None] = lambda done, total: None,
-                 on_done: Callable[[], None] = lambda: None):
+                 on_done: Callable[[], None] = lambda: None,
+                 archive: Optional["Archive"] = None):
         self.service = service
         self.selection = selection
         self.ids = ids
@@ -214,6 +249,7 @@ class Runner:
         self.log = log
         self.progress = progress
         self.on_done = on_done
+        self.archive = archive
 
     def run(self) -> None:
         """Entry point for the worker thread; never raises."""
@@ -224,7 +260,14 @@ class Runner:
         except Exception as exc:  # worker must not die silently
             self.log(f"!!! Error: {exc}")
         finally:
+            if self.archive:
+                self.archive.close()
             self.on_done()
+
+    def _archive(self, item: Item, action: str) -> None:
+        """Record `item` in the archive, if one is attached."""
+        if self.archive:
+            self.archive.write(item, action)
 
     def _run(self) -> None:
         name = self.service.login()
@@ -240,6 +283,7 @@ class Runner:
                     raise Stopped()
                 if self.dry_run:
                     self.log(f"  [PREVIEW] {item.kind} {item.id}: {_short(item.text)}")
+                    self._archive(item, "preview")
                 else:
                     if paused and self.stop.wait(random.uniform(*self.delay)):
                         raise Stopped()
@@ -247,6 +291,7 @@ class Runner:
                         self.service.delete(item)
                         deleted += 1
                         self.log(f"  Deleted {item.kind} {item.id}")
+                        self._archive(item, "deleted")
                     except ApiError as exc:
                         failed += 1
                         self.log(f"  Failed {item.kind} {item.id}: {exc}")
