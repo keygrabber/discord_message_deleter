@@ -107,7 +107,7 @@ class DiscordService(Service):
             if ("messages" in what and msg["author"]["id"] == self.me
                     and msg.get("type", 0) in DELETABLE_MESSAGE_TYPES):
                 yield Item(msg["id"], "message", msg.get("content") or "[media/embed]",
-                           created, {"channel": cid})
+                           created, {"channel": cid}, _content_tags(msg))
             if "reactions" in what:
                 for rx in msg.get("reactions") or []:
                     if not rx.get("me"):
@@ -150,3 +150,16 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _content_tags(msg: dict) -> frozenset:
+    """Classify a message by what it contains: attachment, embed and/or link."""
+    tags = set()
+    if msg.get("attachments"):
+        tags.add("attachment")
+    if msg.get("embeds"):
+        tags.add("embed")
+    content = msg.get("content") or ""
+    if "http://" in content or "https://" in content:
+        tags.add("link")
+    return frozenset(tags)

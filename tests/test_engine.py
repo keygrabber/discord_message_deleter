@@ -40,6 +40,12 @@ class FiltersTest(unittest.TestCase):
         self.assertTrue(Filters().matches(Item("1", "m", "x")))
         self.assertFalse(Filters(after=utc(2024, 1, 1)).matches(Item("1", "m", "x")))
 
+    def test_content_types_apply_to_messages_only(self):
+        f = Filters(content_types=frozenset({"attachment"}))
+        self.assertTrue(f.matches(Item("1", "message", "", tags=frozenset({"attachment", "link"}))))
+        self.assertFalse(f.matches(Item("2", "message", "plain text")))
+        self.assertTrue(f.matches(Item("3", "reaction", "party on 1")))
+
 
 class HttpClientTest(unittest.TestCase):
     def make(self, responses):

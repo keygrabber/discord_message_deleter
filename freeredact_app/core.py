@@ -7,7 +7,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
 
 import requests
 
@@ -29,19 +29,27 @@ class Item:
     text: str = ""
     created: Optional[datetime] = None
     data: Dict[str, str] = field(default_factory=dict)
+    tags: FrozenSet[str] = frozenset()  # content traits, e.g. {"attachment", "link"}
 
 
 @dataclass
 class Filters:
-    """Optional filters; an item must satisfy all that are set."""
+    """Optional filters; an item must satisfy all that are set.
+
+    `content_types` keeps only items having at least one of the given tags; it
+    applies to messages only (reactions have no content to inspect).
+    """
 
     keyword: str = ""
     after: Optional[datetime] = None
     before: Optional[datetime] = None
+    content_types: FrozenSet[str] = frozenset()
 
     def matches(self, item: Item) -> bool:
-        """Return True if `item` passes keyword/date filters (dates are UTC)."""
+        """Return True if `item` passes keyword/date/content filters (dates are UTC)."""
         if self.keyword and self.keyword.lower() not in (item.text or "").lower():
+            return False
+        if self.content_types and item.kind == "message" and not (item.tags & self.content_types):
             return False
         if item.created is not None:
             created = item.created

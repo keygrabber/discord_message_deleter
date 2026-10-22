@@ -24,6 +24,7 @@ SUBTEXT = "#8b8b96"
 DANGER = "#d9534f"
 DANGER_HOVER = "#b94441"
 LOG_LINES_MAX = 3000
+CONTENT_TYPES = [("attachment", "Files / images"), ("link", "Links"), ("embed", "Embeds")]
 
 
 def F(size: int, bold: bool = False) -> ctk.CTkFont:
@@ -244,6 +245,17 @@ class App:
         self.keyword = self._labelled_entry(filt, 0, "Contains text", "")
         self.after_entry = self._labelled_entry(filt, 1, "After date", "")
         self.before_entry = self._labelled_entry(filt, 2, "Before date", "")
+        types_row = ctk.CTkFrame(filt, fg_color="transparent")
+        types_row.grid(row=1, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ctk.CTkLabel(types_row, text="Only messages with:", font=F(12),
+                     text_color=SUBTEXT).pack(side="left", padx=(0, 12))
+        self.type_vars = {}
+        for tag, label in CONTENT_TYPES:
+            self.type_vars[tag] = tk.BooleanVar(value=False)
+            ctk.CTkCheckBox(types_row, text=label, variable=self.type_vars[tag], width=20,
+                            text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                            checkmark_color="#000000", border_color=BORDER
+                            ).pack(side="left", padx=(0, 14))
 
         pace = make_card(form, "Pacing", "Random pause between deletions (seconds). Slower is safer.")
         row = ctk.CTkFrame(pace, fg_color="transparent")
@@ -358,7 +370,8 @@ class App:
             before += timedelta(days=1) - timedelta(seconds=1)  # include the whole day
         if after and before and after > before:
             raise ValueError("'After date' is later than 'Before date'.")
-        return Filters(self.keyword.get().strip(), after, before)
+        kinds = frozenset(tag for tag, var in self.type_vars.items() if var.get())
+        return Filters(self.keyword.get().strip(), after, before, kinds)
 
     def start(self) -> None:
         """Validate the form and launch the worker thread."""
