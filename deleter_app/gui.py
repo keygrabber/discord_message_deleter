@@ -2,6 +2,7 @@
 
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,7 +14,10 @@ import customtkinter as ctk
 from . import __version__
 from .anim import count_step, ease_out, lerp_color
 from .core import Archive, Filters, Runner
+from .icons import icon_shapes
+from .metrics import eta_seconds, format_eta, rate_per_min
 from .services import SERVICES
+from .theme import DEFAULT_PALETTE, PALETTES, gradient, load_settings, save_settings
 
 # Palette (Discord-dark inspired)
 SIDEBAR = "#1e1f22"
@@ -25,8 +29,7 @@ HOVER = "#35373c"
 TEXT = "#f2f3f5"
 SUBTEXT = "#b5bac1"
 MUTED = "#80848e"
-ACCENT = "#5865f2"
-ACCENT_HOVER = "#4752c4"
+ACCENT, ACCENT_HOVER, ACCENT_DIM = PALETTES[DEFAULT_PALETTE]  # replaced by apply_palette()
 GOOD = "#23a55a"
 DANGER = "#da373c"
 DANGER_HOVER = "#a12829"
@@ -41,6 +44,8 @@ MONO = "Consolas" if sys.platform == "win32" else "DejaVu Sans Mono"
 LOG_LINES_MAX = 3000
 CONTENT_TYPES = [("attachment", "Files & images"), ("link", "Links"), ("embed", "Embeds")]
 ARCHIVE_DIR = Path.home() / "Deleter" / "archives"
+SETTINGS_PATH = Path.home() / "Deleter" / "settings.json"
+TOAST_COLORS = {"error": DANGER, "ok": GOOD}  # anything else uses the accent
 MODE_TEXT = {
     "preview": "Scans and lists what would be removed. Nothing is changed.",
     "delete": "Permanently removes everything that matches. This cannot be undone.",
@@ -68,11 +73,92 @@ def F(size: int, bold: bool = False) -> ctk.CTkFont:
     return ctk.CTkFont(family=FONT, size=size, weight="bold" if bold else "normal")
 
 
+def apply_palette(name: str) -> None:
+    """Switch the accent colours; call before any widget is built."""
+    global ACCENT, ACCENT_HOVER, ACCENT_DIM
+    ACCENT, ACCENT_HOVER, ACCENT_DIM = PALETTES.get(name, PALETTES[DEFAULT_PALETTE])
+
+
+def _glow(entry: ctk.CTkEntry, target: str, step: int = 0) -> None:
+    """Fade an entry's border towards `target` in a few frames (safe if the widget is gone)."""
+    try:
+        if step == 0:
+            entry._glow_from = entry.cget("border_color")
+        entry.configure(border_color=lerp_color(entry._glow_from, target, ease_out((step + 1) / 6)))
+        if step < 5:
+            entry._glow_job = entry.after(FRAME_MS, _glow, entry, target, step + 1)
+    except tk.TclError:
+        pass
+
+
 def make_entry(parent, placeholder: str = "", **kwargs) -> ctk.CTkEntry:
-    """A rounded dark text input."""
-    return ctk.CTkEntry(parent, height=38, corner_radius=8, fg_color=INPUT, border_width=1,
-                        border_color=BORDER, text_color=TEXT, placeholder_text=placeholder,
-                        placeholder_text_color=MUTED, font=F(13), **kwargs)
+    """A rounded dark text input whose border glows in the accent colour while focused."""
+    entry = ctk.CTkEntry(parent, height=40, corner_radius=10, fg_color=INPUT, border_width=1,
+                         border_color=BORDER, text_color=TEXT, placeholder_text=placeholder,
+                         placeholder_text_color=MUTED, font=F(13), **kwargs)
+
+    def focus(target):
+        job = getattr(entry, "_glow_job", None)
+        if job:
+            entry.after_cancel(job)
+        _glow(entry, target)
+
+    entry.bind("<FocusIn>", lambda _e: focus(ACCENT), add="+")
+    entry.bind("<FocusOut>", lambda _e: focus(BORDER), add="+")
+    return entry
+
+
+class Icon(tk.Canvas):
+    """A small vector icon (see icons.py) drawn on a canvas that matches its background."""
+
+    def __init__(self, master, name: str, color: str, bg: str, size: int = 20):
+        super().__init__(master, width=size, height=size, bg=bg, highlightthickness=0)
+        for shape in icon_shapes(name, size):
+            kind, coords, width = shape["kind"], shape["coords"], shape["width"]
+            fill = color if shape["fill"] else ""
+            if kind == "oval":
+                self.create_oval(*coords, outline=color, fill=fill, width=width)
+            elif kind == "arc":
+                self.create_arc(*coords, start=shape["start"], extent=shape["extent"], style="arc",
+                                outline=color, width=width)
+            elif kind == "poly":
+                self.create_polygon(*coords, outline=color, fill=fill, width=width, joinstyle="round")
+            else:
+                self.create_line(*coords, fill=color, width=width, capstyle="round", joinstyle="round")
+
+
+class Tooltip:
+    """A small hover hint for any widget (shown after a short delay)."""
+
+    def __init__(self, widget, text: str):
+        self.widget, self.text, self.tip, self.job = widget, text, None, None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        """Arm the delay timer."""
+        self._hide()
+        self.job = self.widget.after(550, self._show)
+
+    def _show(self) -> None:
+        """Create the floating label next to the widget."""
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(self.tip, text=self.text, bg="#111214", fg=TEXT, font=(FONT, 10), padx=10, pady=6,
+                 bd=1, relief="solid", wraplength=280, justify="left").pack()
+
+    def _hide(self, _event=None) -> None:
+        """Cancel the timer and remove the label."""
+        if self.job:
+            self.widget.after_cancel(self.job)
+            self.job = None
+        if self.tip is not None:
+            self.tip.destroy()
+            self.tip = None
 
 
 def make_switch(parent, text: str, variable, command=None) -> ctk.CTkSwitch:
@@ -133,8 +219,8 @@ class Animator:
 class Ring(tk.Canvas):
     """Circular progress indicator with the percentage in the middle."""
 
-    SIZE = 96
-    THICK = 9
+    SIZE = 112
+    THICK = 10
 
     def __init__(self, master, anim: Animator):
         super().__init__(master, width=self.SIZE, height=self.SIZE, bg=CARD, highlightthickness=0)
@@ -164,6 +250,52 @@ class Ring(tk.Canvas):
         self.itemconfigure(self.label, text=f"{round(value * 100)}%")
 
 
+class Hero(tk.Canvas):
+    """Gradient banner with the service name, a tagline and a Preview/Deletion mode pill."""
+
+    HEIGHT = 108
+    RADIUS = 16
+    STRIP = 2
+
+    def __init__(self, master, subtitle: str):
+        super().__init__(master, height=self.HEIGHT, bg=BG, highlightthickness=0)
+        self.title, self.subtitle, self.preview = "", subtitle, True
+        self.bind("<Configure>", lambda _e: self.redraw())
+
+    def set_title(self, title: str) -> None:
+        """Change the big heading."""
+        self.title = title
+        self.redraw()
+
+    def set_mode(self, preview: bool) -> None:
+        """Switch the pill between Preview (green) and Deletion (red)."""
+        self.preview = preview
+        self.redraw()
+
+    def redraw(self) -> None:
+        """Repaint gradient strips (inset near the corners for rounding), texts and the pill."""
+        self.delete("all")
+        w, h, r = self.winfo_width(), self.HEIGHT, self.RADIUS
+        if w < 2 * r:
+            return
+        count = w // self.STRIP + 1
+        for i, colour in enumerate(gradient(lerp_color(CARD, ACCENT, 0.42), CARD, count)):
+            x = i * self.STRIP
+            edge = max(0, min(x, w - x - self.STRIP))
+            inset = 0 if edge >= r else r - (r * r - (r - edge) ** 2) ** 0.5
+            self.create_rectangle(x, inset, x + self.STRIP + 1, h - inset, fill=colour, outline="")
+        self.create_text(28, 40, text=self.title, anchor="w", fill=TEXT, font=F(28, True))
+        self.create_text(29, 74, text=self.subtitle, anchor="w", fill=SUBTEXT, font=F(13))
+        colour = GOOD if self.preview else DANGER
+        label = "PREVIEW MODE" if self.preview else "DELETION MODE"
+        x1, y0, pill_w, pill_h = w - 26, 22, 150, 30
+        x0 = x1 - pill_w
+        self.create_oval(x0, y0, x0 + pill_h, y0 + pill_h, fill=colour, outline="")
+        self.create_oval(x1 - pill_h, y0, x1, y0 + pill_h, fill=colour, outline="")
+        self.create_rectangle(x0 + pill_h / 2, y0, x1 - pill_h / 2, y0 + pill_h, fill=colour, outline="")
+        self.create_text((x0 + x1) / 2, y0 + pill_h / 2, text=label, fill="#ffffff", font=F(11, True))
+
+
 def caption(parent, text: str, pady=(12, 6)) -> ctk.CTkLabel:
     """Small grey label above a control."""
     label = ctk.CTkLabel(parent, text=text, font=F(12, True), text_color=SUBTEXT)
@@ -171,17 +303,27 @@ def caption(parent, text: str, pady=(12, 6)) -> ctk.CTkLabel:
     return label
 
 
-def make_card(parent, title: str, subtitle: str = "") -> ctk.CTkFrame:
-    """A rounded section card; returns the inner content frame."""
-    card = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=14)
+def make_card(parent, title: str, subtitle: str = "", step: int = 0, icon: str = "") -> ctk.CTkFrame:
+    """A rounded step card with an icon tile and a STEP label; returns the inner content frame."""
+    card = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=16, border_width=1, border_color=BORDER)
     card.pack(fill="x", pady=(0, 16))
-    ctk.CTkLabel(card, text=title, font=F(16, True), text_color=TEXT).pack(
-        anchor="w", padx=22, pady=(18, 0))
+    head = ctk.CTkFrame(card, fg_color="transparent")
+    head.pack(fill="x", padx=22, pady=(18, 0))
+    if icon:
+        tile = ctk.CTkFrame(head, width=44, height=44, corner_radius=12, fg_color=ACCENT_DIM)
+        tile.pack(side="left")
+        tile.pack_propagate(False)
+        Icon(tile, icon, ACCENT, ACCENT_DIM, 22).pack(expand=True)
+    titles = ctk.CTkFrame(head, fg_color="transparent")
+    titles.pack(side="left", padx=(14 if icon else 0, 0))
+    if step:
+        ctk.CTkLabel(titles, text=f"STEP {step}", font=F(10, True), text_color=ACCENT).pack(anchor="w")
+    ctk.CTkLabel(titles, text=title, font=F(17, True), text_color=TEXT).pack(anchor="w")
     if subtitle:
         ctk.CTkLabel(card, text=subtitle, font=F(12), text_color=SUBTEXT, wraplength=620,
-                     justify="left").pack(anchor="w", padx=22, pady=(2, 0))
+                     justify="left").pack(anchor="w", padx=22, pady=(8, 0))
     body = ctk.CTkFrame(card, fg_color="transparent")
-    body.pack(fill="x", padx=22, pady=(8, 20))
+    body.pack(fill="x", padx=22, pady=(6, 20))
     return body
 
 
@@ -219,23 +361,26 @@ class Chip(ctk.CTkButton):
 class ServicePanel(ctk.CTkFrame):
     """Credential, option and ID inputs for one service, built from its declaration."""
 
-    def __init__(self, master, service_cls):
+    def __init__(self, master, service_cls, toast=None):
         super().__init__(master, fg_color="transparent")
         self.service_cls = service_cls
+        self.toast = toast or (lambda _text, _kind="info": None)
         self.entries: Dict[str, ctk.CTkEntry] = {}
         self.vars: Dict[str, object] = {}
         self.show_var = tk.BooleanVar(value=False)
 
-        acct = make_card(self, "Account", "Your token is used only on this computer and is never saved.")
+        acct = make_card(self, "Account", "Your token is used only on this computer and is never saved.",
+                         step=1, icon="user")
         for fld in service_cls.credentials:
             caption(acct, fld.label, pady=(4, 6))
             entry = make_entry(acct, f"Paste your {fld.label} here", show="*" if fld.secret else "")
             entry.pack(fill="x")
+            Tooltip(entry, f"Your {fld.label}. It stays on this computer and is never written to disk.")
             self.entries[fld.key] = entry
         if any(f.secret for f in service_cls.credentials):
             make_switch(acct, "Show", self.show_var, self._toggle_secrets).pack(anchor="w", pady=(12, 0))
 
-        target = make_card(self, "What to clean")
+        target = make_card(self, "What to clean", step=2, icon="target")
         for choice in service_cls.choices:
             caption(target, choice.label)
             if choice.multi:
@@ -314,7 +459,7 @@ class ServicePanel(ctk.CTkFrame):
         """Fetch the pick-list (e.g. servers) in a background thread."""
         creds = {k: e.get() for k, e in self.entries.items()}
         if any(not creds[f.key].strip() for f in self.service_cls.credentials):
-            messagebox.showerror("Check the form", "Fill in your credentials first.")
+            self.toast("Fill in your credentials first.", "error")
             return
         self.load_btn.configure(state="disabled", text="Loading...")
 
@@ -425,6 +570,10 @@ class App:
         self.log_empty = True
         self._start_color = ACCENT
         self._border_color = CARD
+        self.run_started = 0.0
+        self.toast_frame = None
+        self.settings = load_settings(SETTINGS_PATH)
+        self.accent_name = self.settings.get("accent", DEFAULT_PALETTE)
 
         root.grid_columnconfigure(1, weight=1)
         root.grid_rowconfigure(0, weight=1)
@@ -470,11 +619,18 @@ class App:
             row.pack(fill="x", padx=(6, 14), pady=2)
             mark = ctk.CTkFrame(row, width=4, height=24, corner_radius=2, fg_color="transparent")
             mark.pack(side="left", padx=(0, 4))
-            btn = ctk.CTkButton(row, text=f"  ◆   {cls.name}", anchor="w", height=42,
-                                corner_radius=10, font=F(14, True), fg_color="transparent",
+            btn = ctk.CTkButton(row, text=f"         {cls.name}", anchor="w", height=46,
+                                corner_radius=12, font=F(14, True), fg_color="transparent",
                                 hover_color=HOVER, text_color=TEXT,
                                 command=lambda i=i: self.show_service(i))
             btn.pack(side="left", fill="x", expand=True)
+            tile = ctk.CTkFrame(row, width=32, height=32, corner_radius=9, fg_color=ACCENT_DIM)
+            tile.pack_propagate(False)
+            icon = Icon(tile, getattr(cls, "icon", "shield"), ACCENT, ACCENT_DIM, 18)
+            icon.pack(expand=True)
+            tile.place(in_=btn, x=12, rely=0.5, anchor="w")
+            for part in (tile, icon):
+                part.bind("<Button-1>", lambda _e, i=i: self.show_service(i))
             self.nav_buttons.append(btn)
             self.nav_marks.append(mark)
 
@@ -488,6 +644,54 @@ class App:
                                 "Use at your own risk.", font=F(11), text_color=SUBTEXT,
                      wraplength=170, justify="left").pack(anchor="w", padx=14, pady=(2, 12))
 
+        picker = ctk.CTkFrame(side, fg_color="transparent")
+        picker.pack(side="bottom", fill="x", padx=24, pady=(0, 16))
+        ctk.CTkLabel(picker, text="ACCENT", font=F(11, True), text_color=MUTED).pack(anchor="w")
+        swatches = ctk.CTkFrame(picker, fg_color="transparent")
+        swatches.pack(anchor="w", pady=(6, 0))
+        self.swatch_buttons: Dict[str, ctk.CTkButton] = {}
+        for name, (colour, hover, _dim) in PALETTES.items():
+            swatch = ctk.CTkButton(swatches, text="", width=26, height=26, corner_radius=13,
+                                   fg_color=colour, hover_color=hover, border_width=2,
+                                   border_color="#ffffff" if name == self.accent_name else SIDEBAR,
+                                   command=lambda n=name: self._pick_accent(n))
+            swatch.pack(side="left", padx=(0, 8))
+            Tooltip(swatch, name)
+            self.swatch_buttons[name] = swatch
+
+    def _pick_accent(self, name: str) -> None:
+        """Remember the chosen accent (applied on the next start) and mark it in the picker."""
+        self.accent_name = name
+        self.settings["accent"] = name
+        save_settings(SETTINGS_PATH, self.settings)
+        for key, button in self.swatch_buttons.items():
+            button.configure(border_color="#ffffff" if key == name else SIDEBAR)
+        self.toast(f"{name} accent saved. Restart Deleter to apply it.", "ok")
+
+    def toast(self, text: str, kind: str = "info") -> None:
+        """Show a short banner at the top right; replaces the previous one (main thread only)."""
+        if self.toast_frame is not None:
+            self.toast_frame.destroy()
+        colour = TOAST_COLORS.get(kind, ACCENT)
+        frame = ctk.CTkFrame(self.root, fg_color="#111214", corner_radius=12, border_width=1,
+                             border_color=colour)
+        ctk.CTkFrame(frame, width=5, corner_radius=3, fg_color=colour).pack(
+            side="left", fill="y", padx=(10, 0), pady=10)
+        ctk.CTkLabel(frame, text=text, font=F(13, True), text_color=TEXT, wraplength=330,
+                     justify="left").pack(side="left", padx=(12, 18), pady=14)
+        self.toast_frame = frame
+        self.anim.run("toast-in", 200, lambda t: frame.place(relx=1.0, x=-24, y=-60 + 84 * ease_out(t),
+                                                           anchor="ne"))
+        self.anim.cancel("toast-hide")
+        self.anim.jobs["toast-hide"] = self.root.after(3800, lambda: self._hide_toast(frame))
+
+    def _hide_toast(self, frame) -> None:
+        """Remove a toast if it is still the visible one."""
+        self.anim.jobs.pop("toast-hide", None)
+        if self.toast_frame is frame:
+            frame.destroy()
+            self.toast_frame = None
+
     def _build_content(self) -> None:
         """Right side: form column on the left, run panel on the right."""
         content = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -496,12 +700,8 @@ class App:
         content.grid_columnconfigure(1, weight=0, minsize=420)
         content.grid_rowconfigure(1, weight=1)
 
-        head = ctk.CTkFrame(content, fg_color="transparent")
-        head.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 16))
-        self.header = ctk.CTkLabel(head, text="", font=F(28, True), text_color=TEXT)
-        self.header.pack(anchor="w")
-        ctk.CTkLabel(head, text="Remove your own messages and reactions. Everything stays on "
-                                "this computer.", font=F(13), text_color=SUBTEXT).pack(anchor="w")
+        self.hero = Hero(content, "Remove your own messages and reactions. Everything stays on this computer.")
+        self.hero.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
 
         form = ctk.CTkScrollableFrame(content, fg_color="transparent",
                                       scrollbar_button_color=BORDER,
@@ -510,20 +710,23 @@ class App:
         self.panel_host = ctk.CTkFrame(form, fg_color="transparent")
         self.panel_host.pack(fill="x")
         for cls in SERVICES:
-            self.panels.append(ServicePanel(self.panel_host, cls))
+            self.panels.append(ServicePanel(self.panel_host, cls, self.toast))
         self._build_filters(form)
         self._build_pacing(form)
         self._build_run_panel(content)
 
     def _build_filters(self, form) -> None:
         """Keyword / date / content-type filters."""
-        filt = make_card(form, "Filters", "Optional. Dates are UTC.")
+        filt = make_card(form, "Filters", "Optional. Dates are UTC.", step=3, icon="filter")
         grid = ctk.CTkFrame(filt, fg_color="transparent")
         grid.pack(fill="x")
         grid.grid_columnconfigure((0, 1, 2), weight=1, uniform="f")
         self.keyword = self._labelled_entry(grid, 0, "Contains text", "any word or phrase")
         self.after_entry = self._labelled_entry(grid, 1, "After date", "YYYY-MM-DD")
         self.before_entry = self._labelled_entry(grid, 2, "Before date", "YYYY-MM-DD")
+        Tooltip(self.keyword, "Only items whose text contains this (case-insensitive). Leave empty for all.")
+        Tooltip(self.after_entry, "Skip anything older than this day (UTC), e.g. 2024-01-31.")
+        Tooltip(self.before_entry, "Skip anything newer than this day (UTC); the whole day is included.")
         caption(filt, "Only messages with")
         row = ctk.CTkFrame(filt, fg_color="transparent")
         row.pack(anchor="w")
@@ -536,7 +739,8 @@ class App:
     def _build_pacing(self, form) -> None:
         """Delay range and archive switch."""
         pace = make_card(form, "Pacing & archive",
-                         "A random pause between deletions keeps you under Discord's rate limits.")
+                         "A random pause between deletions keeps you under Discord's rate limits.",
+                         step=4, icon="clock")
         row = ctk.CTkFrame(pace, fg_color="transparent")
         row.pack(anchor="w")
         self.delay_min = self._small_entry(row, "1.5")
@@ -570,13 +774,13 @@ class App:
                                       wraplength=370, justify="left")
         self.mode_hint.pack(anchor="w", padx=22, pady=(8, 14))
 
-        buttons = ctk.CTkFrame(run, fg_color="transparent")
-        buttons.pack(fill="x", padx=22)
-        self.start_btn = ctk.CTkButton(buttons, text="Start preview", height=46, corner_radius=10,
+        buttons = ctk.CTkFrame(run, fg_color="transparent")  # sticky action bar at the bottom
+        buttons.pack(side="bottom", fill="x", padx=22, pady=(0, 20))
+        self.start_btn = ctk.CTkButton(buttons, text="▶  Start preview", height=50, corner_radius=12,
                                        font=F(15, True), fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                        text_color="#ffffff", command=self.start)
         self.start_btn.pack(side="left", fill="x", expand=True)
-        self.stop_btn = ctk.CTkButton(buttons, text="Stop", width=84, height=46, corner_radius=10,
+        self.stop_btn = ctk.CTkButton(buttons, text="■  Stop", width=96, height=50, corner_radius=12,
                                       font=F(14, True), state="disabled", fg_color=STOP_IDLE,
                                       hover_color=DANGER_HOVER, text_color="#ffffff",
                                       text_color_disabled="#8e9297", command=self.stop)
@@ -601,9 +805,14 @@ class App:
         progress.pack(fill="x", padx=22, pady=(18, 0))
         self.ring = Ring(progress, self.anim)
         self.ring.pack(side="left")
-        self.status = ctk.CTkLabel(progress, text="Idle", font=F(13, True), text_color=MUTED,
-                                   wraplength=250, justify="left")
-        self.status.pack(side="left", padx=(18, 0))
+        info = ctk.CTkFrame(progress, fg_color="transparent")
+        info.pack(side="left", padx=(18, 0))
+        self.status = ctk.CTkLabel(info, text="Idle", font=F(14, True), text_color=MUTED,
+                                   wraplength=230, justify="left")
+        self.status.pack(anchor="w")
+        self.metrics = ctk.CTkLabel(info, text="Speed -- /min  ·  ETA --", font=F(12),
+                                    text_color=MUTED)
+        self.metrics.pack(anchor="w", pady=(4, 0))
 
         ctk.CTkLabel(run, text="Activity", font=F(12, True), text_color=SUBTEXT).pack(
             anchor="w", padx=22, pady=(14, 6))
@@ -648,11 +857,11 @@ class App:
         self.nav_marks[index].configure(fg_color=ACCENT)
         self.anim.run(f"nav-{index}", 160, lambda t: self.nav_buttons[index].configure(
             fg_color=lerp_color(SIDEBAR, HOVER, ease_out(t))))
-        self.header.configure(text=SERVICES[index].name)
+        self.hero.set_title(SERVICES[index].name)
 
     def _start_text(self) -> str:
         """Idle caption of the start button for the current mode."""
-        return "Start preview" if self.run_mode.get() == "preview" else "Start deleting"
+        return "▶  Start preview" if self.run_mode.get() == "preview" else "▶  Start deleting"
 
     def select_mode(self, value: str) -> None:
         """Handle a mode switch: update state, hint text, and fade the start button and card border."""
@@ -660,6 +869,7 @@ class App:
         preview = value == "preview"
         self.mode_seg.set("Preview" if preview else "Deletion")
         self.mode_hint.configure(text=MODE_TEXT[value])
+        self.hero.set_mode(preview)
         self.start_btn.configure(hover_color=ACCENT_HOVER if preview else DANGER_HOVER)
         if not self.running:
             self.start_btn.configure(text=self._start_text())
@@ -683,8 +893,10 @@ class App:
             if self.log_empty:
                 self.log_box.delete("1.0", "end")
                 self.log_empty = False
+            tag = _log_tag(text)
             self.log_box.insert("end", stamp + "  ", "dim")
-            self.log_box.insert("end", text + "\n", _log_tag(text))
+            self.log_box.insert("end", "● ", tag or "dim")
+            self.log_box.insert("end", text + "\n", tag)
             if int(self.log_box.index("end-1c").split(".")[0]) > LOG_LINES_MAX:
                 self.log_box.delete("1.0", f"{LOG_LINES_MAX // 5}.0")
             self.log_box.see("end")
@@ -711,9 +923,12 @@ class App:
             self.anim.run(f"stat-{key}", 320, step)
 
     def _set_progress(self, done: int, total: int) -> None:
-        """Update the ring and status label (main thread only)."""
+        """Update the ring, status and speed/ETA labels (main thread only)."""
         self.ring.set(done / total if total else 0)
         self.status.configure(text=f"{done} of {total} processed")
+        elapsed = time.monotonic() - self.run_started
+        self.metrics.configure(text=f"Speed {rate_per_min(done, elapsed):.0f} /min  ·  "
+                                    f"ETA {format_eta(eta_seconds(done, total, elapsed))}")
 
     def _dots(self) -> None:
         """One tick of the 'Working...' animation on the start button and status."""
@@ -754,7 +969,7 @@ class App:
             msg = str(exc)
             if msg.startswith("could not convert"):
                 msg = "Delays must be numbers."
-            messagebox.showerror("Check the form", msg)
+            self.toast(msg, "error")
             return
 
         dry_run = self.run_mode.get() == "preview"
@@ -768,7 +983,7 @@ class App:
             try:
                 archive = Archive(ARCHIVE_DIR / f"discord-{stamp}-{self.run_mode.get()}.jsonl")
             except OSError as exc:
-                messagebox.showerror("Archive", f"Cannot create archive file: {exc}")
+                self.toast(f"Cannot create archive file: {exc}", "error")
                 return
 
         service = SERVICES[self.current](creds, self.stop_flag, self.log)
@@ -785,6 +1000,8 @@ class App:
         self.ring.set(0, instant=True)
         self._set_stats(0, 0, 0, instant=True)
         self.status.configure(text="Working...", text_color=TEXT)
+        self.metrics.configure(text="Speed -- /min  ·  ETA --")
+        self.run_started = time.monotonic()
         self._dot_count = 0
         self.anim.every("dots", 400, self._dots)
         self.log_box.configure(state="normal")
@@ -810,6 +1027,7 @@ class App:
 def main() -> None:
     """Create the window (stable WM class for tiling-WM rules) and run it."""
     ctk.set_appearance_mode("dark")
+    apply_palette(load_settings(SETTINGS_PATH).get("accent", DEFAULT_PALETTE))
     root = ctk.CTk(className="Deleter")
     App(root)
     root.mainloop()
