@@ -7,8 +7,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from freeredact_app.core import ApiError, Archive, Filters, HttpClient, Item, Runner, Service
-from freeredact_app.services.discord import DiscordService
+from deleter_app.core import ApiError, Archive, Filters, HttpClient, Item, Runner, Service
+from deleter_app.services.discord import DiscordService
 
 
 def utc(y, m, d):
