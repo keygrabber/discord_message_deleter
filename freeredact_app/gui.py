@@ -102,7 +102,7 @@ class ServicePanel(ctk.CTkFrame):
                             fg_color=ACCENT, hover_color=ACCENT_HOVER,
                             checkmark_color="#000000", border_color=BORDER).pack(anchor="w")
 
-        target = make_card(self, "What to remove")
+        target = make_card(self, "Target")
         for choice in service_cls.choices:
             ctk.CTkLabel(target, text=choice.label, font=F(12), text_color=SUBTEXT).pack(
                 anchor="w", pady=(4, 2))
@@ -306,8 +306,8 @@ class App:
         main = ctk.CTkFrame(self.root, fg_color="transparent")
         main.grid(row=0, column=1, sticky="nsew", padx=24, pady=(20, 16))
         main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(1, weight=3)
-        main.grid_rowconfigure(2, weight=2)
+        main.grid_rowconfigure(1, weight=1)
+        main.grid_rowconfigure(2, weight=0)
 
         self.header = ctk.CTkLabel(main, text="", font=F(22, True), text_color=TEXT)
         self.header.grid(row=0, column=0, sticky="w", pady=(0, 12))
@@ -381,7 +381,7 @@ class App:
         self.bar.set(0)
         self.bar.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
         self.log_box = ctk.CTkTextbox(run, fg_color=BG, text_color=TEXT, border_width=0,
-                                      font=ctk.CTkFont(family="Consolas", size=12))
+                                      height=150, font=ctk.CTkFont(family="Consolas", size=12))
         self.log_box.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.log_box.configure(state="disabled")
 
