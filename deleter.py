@@ -9,7 +9,7 @@ Hyprland - to open the window floating and centered, add to
 
     windowrulev2 = float, class:^(Deleter)$
     windowrulev2 = center, class:^(Deleter)$
-    windowrulev2 = size 1020 780, class:^(Deleter)$
+    windowrulev2 = size 1260 820, class:^(Deleter)$
 """
 
 from deleter_app.gui import main

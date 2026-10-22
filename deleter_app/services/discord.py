@@ -22,17 +22,17 @@ class DiscordService(Service):
     name = "Discord"
     credentials = [Field("token", "Discord token", secret=True)]
     choices = [
-        Choice("what", "What to remove", [
-            ("messages", "My messages"),
-            ("reactions", "My reactions"),
+        Choice("what", "Remove my", [
+            ("messages", "Messages"),
+            ("reactions", "Reactions"),
         ], multi=True),
-        Choice("scope", "Where", [
+        Choice("scope", "Where to look", [
             ("dms", "All DMs"),
             ("servers", "All servers"),
-            ("picked", "Servers I choose"),
-            ("selected", "Specific channel / DM IDs"),
+            ("picked", "Choose servers"),
+            ("selected", "By ID"),
         ]),
-        Choice("extras", "Also search", [
+        Choice("extras", "Extras", [
             ("threads", "Threads & forum posts (servers only, slower)"),
         ], multi=True, default=(), required=False),
     ]

@@ -46,9 +46,9 @@ python -m unittest
 ## Checking that it works (safe, step by step)
 
 1. `python -m unittest` should print `OK`.
-2. `python deleter.py` should open the window. Switch between the options and watch the form change (the ID box appears only for "Specific channel / DM IDs", the server list only for "Servers I choose").
+2. `python deleter.py` should open the window. Switch between the options and watch the form change (the ID box appears only for "By ID", the server list only for "Choose servers").
 3. Paste your token, keep **Preview** mode, choose "All DMs" and press **Start preview**. The log should say `Logged in as <your name>`, list `[PREVIEW]` lines and finish with "Nothing was deleted". Nothing is changed in this mode.
-4. Try a narrow **Deletion** run first: "Specific channel / DM IDs" with one test DM, then check in Discord that only your own messages from there are gone.
+4. Try a narrow **Deletion** run first: "By ID" with one test DM, then check in Discord that only your own messages from there are gone.
 5. Turn on "Save an archive of this run" if you want a local copy of what was removed.
 
 ## Architecture
