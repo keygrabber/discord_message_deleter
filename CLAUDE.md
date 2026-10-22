@@ -5,7 +5,7 @@ Repo: https://github.com/keygrabber/freeredact (default branch `main`).
 
 ## Layout
 - `freeredact.py` — thin launcher (`freeredact_app.gui.main`).
-- `freeredact_app/core.py` — `Item`, `Filters`, `Field`/`Choice` (GUI declarations), `HttpClient` (timeouts, bounded retries, stop-aware 429 waits), `Service` base class, `Runner` (processes `scan_batches` one batch / channel at a time, deletes as it goes, never dies silently).
+- `freeredact_app/core.py` — `Item` (with content `tags`), `Filters` (keyword, dates, content types), `Archive` (JSONL), `Field`/`Choice` (GUI declarations), `HttpClient` (timeouts, bounded retries, stop-aware 429 waits), `Service` base class, `Runner` (processes `scan_batches` one batch / channel at a time, deletes as it goes, never dies silently).
 - `freeredact_app/services/discord.py` — Discord API logic (the app is Discord-only; the `Service` base class keeps it extensible).
 - `freeredact_app/gui.py` — sidebar + per-service forms generated from service declarations; worker thread runs `Runner.run`.
 - `tests/` — offline `unittest` tests (fake responses, no network, no GUI): `python -m unittest`.
@@ -33,3 +33,7 @@ Repo: https://github.com/keygrabber/freeredact (default branch `main`).
 
 ## Permissions
 `.claude/settings.json` allows `WebFetch` and read-only git/python checks.
+
+## Caveats
+- Nothing has been run against the live Discord API (only fake responses). The threads endpoints (`/guilds/{id}/threads/active`, `.../threads/archived/public`) are documented for bots and may be refused for user tokens; failures are logged and skipped. Test with Preview first.
+- Never commit anything under `~/FreeRedact/archives` — archives contain message text.

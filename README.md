@@ -2,7 +2,14 @@
 
 Open-source, local alternative to [Redact](https://redact.dev), built specifically for **Discord**: bulk-remove your own messages and reactions from DMs, servers or chosen channels, with filters, a preview mode and a dark GUI. Everything runs on your machine; your token is never stored.
 
-Features: keyword and date filters, Preview mode (nothing is changed), random pacing between deletions, automatic rate-limit handling, progress bar, Stop button.
+Features:
+
+- Remove your **messages** and **reactions** from all DMs, all servers, servers you pick from a list, or specific channel/DM IDs (optionally including threads and forum posts).
+- Filters: contains text, date range, only messages with files, links or embeds.
+- **Preview** mode shows what would be removed without touching anything.
+- Works channel by channel, so deletion starts right away and Stop keeps what was already done.
+- Random pacing, automatic rate-limit and network-error handling, progress bar, Stop button.
+- Optional local archive (JSON Lines) of every removed item in `~/FreeRedact/archives`.
 
 > **Warning:** automating a user account (a Discord user token) violates Discord's Terms of Service. Use at your own risk and never share your token.
 
