@@ -41,7 +41,8 @@ class DiscordService(Service):
         })
         self.me: Optional[str] = None
 
-    def needs_ids(self, selection) -> bool:
+    @classmethod
+    def needs_ids(cls, selection) -> bool:
         """IDs are only needed for the 'selected' scope."""
         return selection.get("scope") == "selected"
 

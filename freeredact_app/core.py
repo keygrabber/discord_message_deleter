@@ -158,7 +158,8 @@ class Service:
         self.stop = stop
         self.log = log
 
-    def needs_ids(self, selection: Dict[str, object]) -> bool:
+    @classmethod
+    def needs_ids(cls, selection: Dict[str, object]) -> bool:
         """Whether the current selection requires the user to paste IDs."""
         return False
 
