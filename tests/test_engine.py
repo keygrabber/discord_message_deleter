@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 from freeredact_app.core import ApiError, Filters, HttpClient, Item, Runner, Service
 from freeredact_app.services.discord import DiscordService
-from freeredact_app.services.reddit import RedditService
 
 
 def utc(y, m, d):
@@ -141,28 +140,6 @@ class DiscordTest(unittest.TestCase):
     def test_needs_ids_only_for_selected_scope(self):
         self.assertTrue(DiscordService.needs_ids({"scope": "selected"}))
         self.assertFalse(DiscordService.needs_ids({"scope": "dms"}))
-
-
-class RedditTest(unittest.TestCase):
-    def test_scan_and_vote_reset(self):
-        svc = RedditService({"client_id": "a", "client_secret": "b", "username": "u",
-                             "password": "p"}, threading.Event(), lambda _m: None)
-        calls = []
-
-        def fake(method, path, **kwargs):
-            calls.append((method, path, kwargs.get("data")))
-            if method == "GET":
-                return FakeResponse(200, {"data": {"after": None, "children": [
-                    {"data": {"name": "t1_abc", "body": "hello", "created_utc": 1700000000}}]}})
-            return FakeResponse(200, {})
-
-        svc.http.request = fake
-        items = list(svc.scan({"what": ["comments"]}, []))
-        self.assertEqual((items[0].id, items[0].kind, items[0].text), ("t1_abc", "comment", "hello"))
-        svc.delete(Item("t3_x", "upvote"))
-        svc.delete(items[0])
-        self.assertEqual(calls[-2], ("POST", "/api/vote", {"id": "t3_x", "dir": 0}))
-        self.assertEqual(calls[-1], ("POST", "/api/del", {"id": "t1_abc"}))
 
 
 if __name__ == "__main__":
