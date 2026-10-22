@@ -31,9 +31,15 @@ pip install -r requirements.txt                           # Windows
 
 ## Run
 
+On Windows just double-click **`Deleter.bat`**: it opens the window without a terminal (and installs the packages on the first start). From a shell:
+
 ```bash
 python deleter.py
 ```
+
+### Standalone `.exe` (Windows)
+
+Run **`build_exe.bat`** once. It builds `dist\Deleter.exe` with PyInstaller, a single file you can share; it needs no Python to run.
 
 Always start with **Preview** mode and check the log before switching to **Deletion**.
 
