@@ -18,15 +18,35 @@ SIDEBAR_BG = "#111114"
 CARD_BG = "#16161a"
 CARD_BG_SELECTED = "#202026"
 BORDER = "#2a2a31"
-ACCENT = "#ffffff"
-ACCENT_HOVER = "#d4d4d8"
+ACCENT = "#5865f2"
+ACCENT_HOVER = "#4752c4"
 TEXT = "#ececf0"
 SUBTEXT = "#8b8b96"
 DANGER = "#d9534f"
 DANGER_HOVER = "#b94441"
+GOOD = "#43b581"
+WARN = "#faa61a"
 LOG_LINES_MAX = 3000
 CONTENT_TYPES = [("attachment", "Files / images"), ("link", "Links"), ("embed", "Embeds")]
 ARCHIVE_DIR = Path.home() / "FreeRedact" / "archives"
+
+
+LOG_COLORS = {"preview": "#8ea1ff", "ok": GOOD, "bad": DANGER, "warn": WARN, "dim": SUBTEXT}
+
+
+def _log_tag(text: str) -> str:
+    """Pick the colour tag for a log line ('' = default colour)."""
+    if "[PREVIEW]" in text:
+        return "preview"
+    if "Deleted" in text or text.startswith("Done") or text.startswith("Preview done"):
+        return "ok"
+    if "Failed" in text or "!!!" in text:
+        return "bad"
+    if ">>>" in text or "Rate limited" in text or "Network error" in text:
+        return "warn"
+    if text.startswith("---") or text.startswith("Logged in"):
+        return "dim"
+    return ""
 
 
 def F(size: int, bold: bool = False) -> ctk.CTkFont:
@@ -89,20 +109,21 @@ class ServicePanel(ctk.CTkFrame):
         self.vars: Dict[str, object] = {}
         self.show_var = tk.BooleanVar(value=False)
 
-        acct = make_card(self, "Account", "Credentials stay in memory only and are never saved.")
+        acct = make_card(self, "1  Account", "Credentials stay in memory only and are never saved.")
         for fld in service_cls.credentials:
             ctk.CTkLabel(acct, text=fld.label, font=F(12), text_color=SUBTEXT).pack(anchor="w")
             entry = ctk.CTkEntry(acct, show="*" if fld.secret else "", height=34,
-                                 fg_color=BG, border_color=BORDER, text_color=TEXT)
+                                 fg_color=BG, border_color=BORDER, text_color=TEXT,
+                                 placeholder_text=f"Paste your {fld.label} here")
             entry.pack(fill="x", pady=(2, 8))
             self.entries[fld.key] = entry
         if any(f.secret for f in service_cls.credentials):
             ctk.CTkCheckBox(acct, text="Show secrets", variable=self.show_var,
                             command=self._toggle_secrets, text_color=SUBTEXT,
                             fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                            checkmark_color="#000000", border_color=BORDER).pack(anchor="w")
+                            checkmark_color="#ffffff", border_color=BORDER).pack(anchor="w")
 
-        target = make_card(self, "Target")
+        target = make_card(self, "2  Target")
         for choice in service_cls.choices:
             ctk.CTkLabel(target, text=choice.label, font=F(12), text_color=SUBTEXT).pack(
                 anchor="w", pady=(4, 2))
@@ -114,7 +135,7 @@ class ServicePanel(ctk.CTkFrame):
                     ctk.CTkCheckBox(target, text=label, variable=group[value],
                                     command=self._refresh_ids, text_color=TEXT,
                                     fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                                    checkmark_color="#000000", border_color=BORDER
+                                    checkmark_color="#ffffff", border_color=BORDER
                                     ).pack(anchor="w", pady=3)
                 self.vars[choice.key] = group
             else:
@@ -127,13 +148,15 @@ class ServicePanel(ctk.CTkFrame):
                 self.vars[choice.key] = var
 
         self.ids_entry = None
+        self.ids_box = None
         if service_cls.ids_label:
-            ctk.CTkLabel(target, text=service_cls.ids_label, font=F(12),
+            self.ids_box = ctk.CTkFrame(target, fg_color="transparent")
+            ctk.CTkLabel(self.ids_box, text=service_cls.ids_label, font=F(12),
                          text_color=SUBTEXT).pack(anchor="w", pady=(10, 2))
-            self.ids_entry = ctk.CTkEntry(target, height=34, fg_color=BG, border_color=BORDER,
-                                          text_color=TEXT, state="disabled",
+            self.ids_entry = ctk.CTkEntry(self.ids_box, height=34, fg_color=BG, border_color=BORDER,
+                                          text_color=TEXT,
                                           placeholder_text="e.g. 111222333444555666, 222333444555666777")
-            self.ids_entry.pack(fill="x")
+            self.ids_entry.pack(fill="x")  # the box itself is shown by _refresh_ids
 
         self.picker_vars: Dict[str, tk.BooleanVar] = {}
         self.picker_box = None
@@ -195,7 +218,7 @@ class ServicePanel(ctk.CTkFrame):
             self.picker_vars[ident] = tk.BooleanVar(value=False)
             ctk.CTkCheckBox(self.picker_list, text=label, variable=self.picker_vars[ident],
                             text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                            checkmark_color="#000000", border_color=BORDER).pack(anchor="w", pady=2)
+                            checkmark_color="#ffffff", border_color=BORDER).pack(anchor="w", pady=2)
 
     def _set_all_picked(self, state: bool) -> None:
         """Tick or untick every entry of the pick-list."""
@@ -217,23 +240,19 @@ class ServicePanel(ctk.CTkFrame):
         return out
 
     def _refresh_ids(self) -> None:
-        """Enable the ID box only when the selection needs IDs.
-
-        State and placeholder are configured separately on purpose: CTkEntry only
-        applies a placeholder update while it is in the "normal" state.
-        """
+        """Show the ID box / server pick-list only when the selection needs them."""
         if self.picker_box is not None:
             if self._picker_active():
                 self.picker_box.pack(fill="x")
             else:
                 self.picker_box.pack_forget()
-        if self.ids_entry is None:
+        if self.ids_box is None:
             return
-        needed = self.service_cls.needs_ids(self.selection())
-        self.ids_entry.configure(state="normal")
-        if not needed:
+        if self.service_cls.needs_ids(self.selection()):
+            self.ids_box.pack(fill="x")
+        else:
+            self.ids_box.pack_forget()
             self.ids_entry.delete(0, "end")
-            self.ids_entry.configure(state="disabled")
 
     def collect(self) -> Tuple[Dict[str, str], Dict[str, object], List[str]]:
         """Validate and return (credentials, selection, ids); raises ValueError."""
@@ -264,8 +283,8 @@ class App:
         self.root = root
         root.title(f"FreeRedact {__version__}")
         root.configure(fg_color=BG)
-        root.minsize(940, 700)
-        w, h = 1020, 780
+        root.minsize(960, 720)
+        w, h = 1100, 860
         root.geometry(f"{w}x{h}+{(root.winfo_screenwidth() - w) // 2}+"
                       f"{max(0, (root.winfo_screenheight() - h) // 2 - 20)}")
 
@@ -298,8 +317,10 @@ class App:
             btn.pack(fill="x", padx=12, pady=2)
             self.nav_buttons.append(btn)
         ctk.CTkLabel(side, text="Automating a user account can\nbreach a platform's Terms.\n"
-                                "Use at your own risk.", font=F(10), text_color=SUBTEXT,
-                     justify="left").pack(side="bottom", anchor="w", padx=20, pady=20)
+                                "Use at your own risk.", font=F(10), text_color=WARN,
+                     justify="left").pack(side="bottom", anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkLabel(side, text=f"v{__version__}  ·  open source", font=F(10),
+                     text_color=SUBTEXT).pack(side="bottom", anchor="w", padx=20, pady=(0, 18))
 
     def _build_main(self) -> None:
         """Right side: header, scrollable form, fixed run/log panel."""
@@ -319,11 +340,11 @@ class App:
         for cls in SERVICES:
             self.panels.append(ServicePanel(self.panel_host, cls))
 
-        filt = make_card(form, "Filters", "Optional. Dates are UTC, format YYYY-MM-DD.")
+        filt = make_card(form, "3  Filters", "Optional. Dates are UTC, format YYYY-MM-DD.")
         filt.grid_columnconfigure((0, 1, 2), weight=1, uniform="f")
-        self.keyword = self._labelled_entry(filt, 0, "Contains text", "")
-        self.after_entry = self._labelled_entry(filt, 1, "After date", "")
-        self.before_entry = self._labelled_entry(filt, 2, "Before date", "")
+        self.keyword = self._labelled_entry(filt, 0, "Contains text", "", "any word or phrase")
+        self.after_entry = self._labelled_entry(filt, 1, "After date", "", "YYYY-MM-DD")
+        self.before_entry = self._labelled_entry(filt, 2, "Before date", "", "YYYY-MM-DD")
         types_row = ctk.CTkFrame(filt, fg_color="transparent")
         types_row.grid(row=1, column=0, columnspan=3, sticky="w", pady=(12, 0))
         ctk.CTkLabel(types_row, text="Only messages with:", font=F(12),
@@ -333,24 +354,24 @@ class App:
             self.type_vars[tag] = tk.BooleanVar(value=False)
             ctk.CTkCheckBox(types_row, text=label, variable=self.type_vars[tag], width=20,
                             text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                            checkmark_color="#000000", border_color=BORDER
+                            checkmark_color="#ffffff", border_color=BORDER
                             ).pack(side="left", padx=(0, 14))
 
-        pace = make_card(form, "Pacing", "Random pause between deletions (seconds). Slower is safer.")
+        pace = make_card(form, "4  Pacing", "Random pause between deletions (seconds). Slower is safer.")
         row = ctk.CTkFrame(pace, fg_color="transparent")
         row.pack(anchor="w")
         self.delay_min = self._small_entry(row, "1.5")
         ctk.CTkLabel(row, text="to", text_color=SUBTEXT).pack(side="left", padx=10)
         self.delay_max = self._small_entry(row, "3.5")
 
-        archive_card = make_card(form, "Local archive",
+        archive_card = make_card(form, "5  Local archive",
                                  f"Optional private copy of each removed item (JSON Lines) in {ARCHIVE_DIR}")
         self.archive_var = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(archive_card, text="Save an archive of this run", variable=self.archive_var,
                         text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                        checkmark_color="#000000", border_color=BORDER).pack(anchor="w")
+                        checkmark_color="#ffffff", border_color=BORDER).pack(anchor="w")
 
-        mode = make_card(form, "Mode")
+        mode = make_card(form, "6  Mode")
         mode.grid_columnconfigure((0, 1), weight=1, uniform="m")
         self.preview_card = ModeCard(mode, "\U0001F441", "Preview", "Shows what would be removed. "
                                      "Nothing is changed.", "preview", self.select_mode)
@@ -369,7 +390,7 @@ class App:
         top.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 6))
         self.start_btn = ctk.CTkButton(top, text="Start preview", width=150, height=34,
                                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                                       text_color="#000000", command=self.start)
+                                       text_color="#ffffff", command=self.start)
         self.start_btn.pack(side="left")
         self.stop_btn = ctk.CTkButton(top, text="Stop", width=90, height=34, state="disabled",
                                       fg_color=DANGER, hover_color=DANGER_HOVER,
@@ -377,21 +398,32 @@ class App:
         self.stop_btn.pack(side="left", padx=10)
         self.status = ctk.CTkLabel(top, text="Idle", font=F(12), text_color=SUBTEXT)
         self.status.pack(side="right")
+        self.chips = {}
+        for key, label, color in (("failed", "Failed", DANGER), ("deleted", "Removed", GOOD),
+                                  ("found", "Found", TEXT)):
+            chip = ctk.CTkLabel(top, text=f"{label} 0", font=F(12, True), text_color=color,
+                                fg_color=CARD_BG_SELECTED, corner_radius=8, padx=10, pady=4)
+            chip.pack(side="right", padx=(0, 8))
+            self.chips[key] = (chip, label)
         self.bar = ctk.CTkProgressBar(run, height=8, progress_color=ACCENT, fg_color=BORDER)
         self.bar.set(0)
         self.bar.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
         self.log_box = ctk.CTkTextbox(run, fg_color=BG, text_color=TEXT, border_width=0,
                                       height=150, font=ctk.CTkFont(family="Consolas", size=12))
         self.log_box.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        for tag, color in LOG_COLORS.items():
+            self.log_box.tag_config(tag, foreground=color)
         self.log_box.configure(state="disabled")
 
     @staticmethod
-    def _labelled_entry(parent, col: int, label: str, default: str) -> ctk.CTkEntry:
+    def _labelled_entry(parent, col: int, label: str, default: str,
+                        placeholder: str = "") -> ctk.CTkEntry:
         """A label above an entry, placed in grid column `col`."""
         box = ctk.CTkFrame(parent, fg_color="transparent")
         box.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 8, 0))
         ctk.CTkLabel(box, text=label, font=F(12), text_color=SUBTEXT).pack(anchor="w")
-        entry = ctk.CTkEntry(box, height=34, fg_color=BG, border_color=BORDER, text_color=TEXT)
+        entry = ctk.CTkEntry(box, height=34, fg_color=BG, border_color=BORDER, text_color=TEXT,
+                             placeholder_text=placeholder)
         entry.insert(0, default)
         entry.pack(fill="x", pady=(2, 0))
         return entry
@@ -422,18 +454,27 @@ class App:
         self.run_mode.set(value)
         self.preview_card.set_selected(value == "preview")
         self.delete_card.set_selected(value == "delete")
-        self.start_btn.configure(text="Start preview" if value == "preview" else "Start deleting")
+        preview = value == "preview"
+        self.start_btn.configure(text="Start preview" if preview else "Start deleting",
+                                 fg_color=ACCENT if preview else DANGER,
+                                 hover_color=ACCENT_HOVER if preview else DANGER_HOVER)
 
     def log(self, text: str) -> None:
         """Append a line to the log; safe to call from the worker thread."""
         def _write():
             self.log_box.configure(state="normal")
-            self.log_box.insert("end", text + "\n")
+            self.log_box.insert("end", text + "\n", _log_tag(text))
             if int(self.log_box.index("end-1c").split(".")[0]) > LOG_LINES_MAX:
                 self.log_box.delete("1.0", f"{LOG_LINES_MAX // 5}.0")
             self.log_box.see("end")
             self.log_box.configure(state="disabled")
         self.root.after(0, _write)
+
+    def _set_stats(self, found: int, deleted: int, failed: int) -> None:
+        """Update the Found / Removed / Failed counters (main thread only)."""
+        for key, value in (("found", found), ("deleted", deleted), ("failed", failed)):
+            chip, label = self.chips[key]
+            chip.configure(text=f"{label} {value}")
 
     def _set_progress(self, done: int, total: int) -> None:
         """Update the bar and status label (main thread only)."""
@@ -496,12 +537,14 @@ class App:
                         self.log,
                         progress=lambda d, t: self.root.after(0, self._set_progress, d, t),
                         on_done=lambda: self.root.after(0, self._finished),
-                        archive=archive)
+                        archive=archive,
+                        stats=lambda f, d, x: self.root.after(0, self._set_stats, f, d, x))
         self.stop_flag.clear()
         self.running = True
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.bar.set(0)
+        self._set_stats(0, 0, 0)
         self.status.configure(text="Working...")
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")

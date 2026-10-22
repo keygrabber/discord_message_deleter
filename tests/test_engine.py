@@ -100,6 +100,13 @@ class RunnerTest(unittest.TestCase):
         self.run_runner(svc, dry_run=True)
         self.assertEqual(svc.deleted, [])
 
+    def test_stats_report_found_deleted_failed(self):
+        svc = FakeService([Item("1", "m", "a"), Item("2", "m", "b")], fail_ids=["2"])
+        seen = []
+        Runner(svc, {}, [], Filters(), False, (0, 0), svc.stop, lambda _m: None,
+               stats=lambda f, d, x: seen.append((f, d, x))).run()
+        self.assertEqual(seen[-1], (2, 1, 1))
+
     def test_delete_skips_filtered_and_survives_failures(self):
         svc = FakeService([Item("1", "m", "keep"), Item("2", "m", "drop"), Item("3", "m", "drop")],
                           fail_ids=["2"])
