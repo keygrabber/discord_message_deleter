@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote -v)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python -m unittest:*)",
+      "Bash(python -m compileall:*)",
+      "Bash(python -I -m py_compile:*)",
+      "PowerShell(git status:*)",
+      "PowerShell(git diff:*)",
+      "PowerShell(git log:*)",
+      "PowerShell(python -m py_compile:*)"
+    ]
+  }
+}
