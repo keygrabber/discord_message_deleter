@@ -171,13 +171,25 @@ class Service:
         """Yield every candidate item. Must not delete anything."""
         raise NotImplementedError
 
+    def scan_batches(self, selection: Dict[str, object],
+                     ids: List[str]) -> Iterator[List[Item]]:
+        """Yield candidates in batches (e.g. one per channel) so deleting can start early.
+
+        The default puts everything into a single batch.
+        """
+        yield list(self.scan(selection, ids))
+
     def delete(self, item: Item) -> None:
         """Delete/undo one item. Raise ApiError if it failed."""
         raise NotImplementedError
 
 
 class Runner:
-    """Scans first, then (unless `dry_run`) deletes the matching items one by one."""
+    """Walks the service batch by batch; unless `dry_run`, deletes each matching item.
+
+    Processing batch by batch (one Discord channel at a time) means deletions start
+    right away and pressing Stop keeps everything already done.
+    """
 
     def __init__(self, service: Service, selection: Dict[str, object], ids: List[str],
                  filters: Filters, dry_run: bool, delay: Tuple[float, float],
@@ -210,38 +222,35 @@ class Runner:
         name = self.service.login()
         self.log(f"Logged in as {name}.")
 
-        self.log("Scanning...")
-        items: List[Item] = []
-        for item in self.service.scan(self.selection, self.ids):
-            if self.filters.matches(item):
-                items.append(item)
-                if len(items) % 100 == 0:
-                    self.log(f"  ...{len(items)} matching so far")
-        total = len(items)
-        self.log(f"Found {total} matching item(s).")
-        self.progress(0, total)
+        found = handled = deleted = failed = 0
+        paused = False  # becomes True after the first deletion; pause before the next one
+        for batch in self.service.scan_batches(self.selection, self.ids):
+            matching = [item for item in batch if self.filters.matches(item)]
+            found += len(matching)
+            for item in matching:
+                if self.stop.is_set():
+                    raise Stopped()
+                if self.dry_run:
+                    self.log(f"  [PREVIEW] {item.kind} {item.id}: {_short(item.text)}")
+                else:
+                    if paused and self.stop.wait(random.uniform(*self.delay)):
+                        raise Stopped()
+                    try:
+                        self.service.delete(item)
+                        deleted += 1
+                        self.log(f"  Deleted {item.kind} {item.id}")
+                    except ApiError as exc:
+                        failed += 1
+                        self.log(f"  Failed {item.kind} {item.id}: {exc}")
+                    paused = True
+                handled += 1
+                self.progress(handled, found)
+            self.progress(handled, found)
 
         if self.dry_run:
-            for i, item in enumerate(items, 1):
-                self.log(f"  [PREVIEW] {item.kind} {item.id}: {_short(item.text)}")
-                self.progress(i, total)
-            self.log(f"Preview done. Nothing was deleted ({total} would be).")
-            return
-
-        deleted = failed = 0
-        for i, item in enumerate(items, 1):
-            try:
-                self.service.delete(item)
-                deleted += 1
-                self.log(f"  Deleted {item.kind} {item.id}")
-            except ApiError as exc:
-                failed += 1
-                self.log(f"  Failed {item.kind} {item.id}: {exc}")
-            self.progress(i, total)
-            if i < total:
-                if self.stop.wait(random.uniform(*self.delay)):
-                    raise Stopped()
-        self.log(f"Done. Deleted {deleted}, failed {failed}.")
+            self.log(f"Preview done. Nothing was deleted ({found} would be).")
+        else:
+            self.log(f"Done. Deleted {deleted}, failed {failed}.")
 
 
 def _short(text: str, limit: int = 60) -> str:
