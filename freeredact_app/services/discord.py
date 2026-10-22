@@ -5,7 +5,7 @@ Use at your own risk and never share your token.
 """
 
 from datetime import datetime
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import quote
 
 from ..core import ApiError, Choice, Field, HttpClient, Item, Service
@@ -29,6 +29,7 @@ class DiscordService(Service):
         Choice("scope", "Where", [
             ("dms", "All DMs"),
             ("servers", "All servers"),
+            ("picked", "Servers I choose"),
             ("selected", "Specific channel / DM IDs"),
         ]),
         Choice("extras", "Also search", [
@@ -36,6 +37,7 @@ class DiscordService(Service):
         ], multi=True, default=(), required=False),
     ]
     ids_label = "Channel or DM IDs (comma separated)"
+    picker_choice = ("scope", "picked")
 
     def __init__(self, creds, stop, log):
         super().__init__(creds, stop, log)
@@ -49,6 +51,14 @@ class DiscordService(Service):
     def needs_ids(cls, selection) -> bool:
         """IDs are only needed for the 'selected' scope."""
         return selection.get("scope") == "selected"
+
+    def list_choices(self) -> List[Tuple[str, str]]:
+        """Servers this account is in, as (id, name) pairs sorted by name."""
+        r = self.http.request("GET", "/users/@me/guilds")
+        if r.status_code != 200:
+            raise ApiError(f"cannot list servers ({r.status_code})")
+        return sorted(((g["id"], g.get("name", g["id"])) for g in r.json()),
+                      key=lambda pair: pair[1].lower())
 
     def login(self) -> str:
         """Verify the token and remember our user ID."""
@@ -123,6 +133,8 @@ class DiscordService(Service):
         if r.status_code != 200:
             raise ApiError(f"cannot list servers ({r.status_code})")
         guilds = r.json()
+        if scope == "picked":
+            guilds = [g for g in guilds if g["id"] in ids]
         self.log(f"Found {len(guilds)} servers.")
         channels: List[str] = []
         for g in guilds:
