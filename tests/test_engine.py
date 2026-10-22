@@ -172,6 +172,23 @@ class DiscordTest(unittest.TestCase):
                          [("message", "10"), ("reaction", "10/party:77")])
         self.assertEqual(items[0].created, datetime(2024, 5, 1, 10, tzinfo=timezone.utc))
 
+    def test_server_scope_adds_threads_only_when_requested(self):
+        svc, _ = self.make([])
+        archived = {"threads": [{"id": "t2", "thread_metadata": {
+            "archive_timestamp": "2024-01-01T00:00:00+00:00"}}], "has_more": False}
+        routes = {
+            "/users/@me/guilds": [{"id": "g", "name": "G"}],
+            "/guilds/g/channels": [{"id": "c1", "type": 0}, {"id": "f1", "type": 15},
+                                   {"id": "v", "type": 2}],
+            "/guilds/g/threads/active": {"threads": [{"id": "t1"}]},
+            "/channels/c1/threads/archived/public": archived,
+            "/channels/f1/threads/archived/public": {"threads": [{"id": "t1"}], "has_more": False},
+        }
+        svc.http.request = lambda method, path, **kw: (
+            FakeResponse(200, routes[path]) if path in routes else FakeResponse(404, {}))
+        self.assertEqual(svc._channel_ids("servers", [], True), ["c1", "t1", "t2"])
+        self.assertEqual(svc._channel_ids("servers", [], False), ["c1"])
+
     def test_delete_paths(self):
         svc, calls = self.make([])
         svc.delete(Item("10", "message", "", None, {"channel": "5"}))

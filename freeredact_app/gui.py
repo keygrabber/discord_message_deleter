@@ -109,7 +109,8 @@ class ServicePanel(ctk.CTkFrame):
             if choice.multi:
                 group = {}
                 for i, (value, label) in enumerate(choice.options):
-                    group[value] = tk.BooleanVar(value=(i == 0))
+                    group[value] = tk.BooleanVar(
+                        value=(i == 0) if choice.default is None else value in choice.default)
                     ctk.CTkCheckBox(target, text=label, variable=group[value],
                                     command=self._refresh_ids, text_color=TEXT,
                                     fg_color=ACCENT, hover_color=ACCENT_HOVER,
@@ -117,7 +118,7 @@ class ServicePanel(ctk.CTkFrame):
                                     ).pack(anchor="w", pady=3)
                 self.vars[choice.key] = group
             else:
-                var = tk.StringVar(value=choice.options[0][0])
+                var = tk.StringVar(value=(choice.default or [choice.options[0][0]])[0])
                 for value, label in choice.options:
                     ctk.CTkRadioButton(target, text=label, variable=var, value=value,
                                        command=self._refresh_ids, text_color=TEXT,
@@ -170,7 +171,7 @@ class ServicePanel(ctk.CTkFrame):
                 raise ValueError(f"Fill in: {fld.label}")
         selection = self.selection()
         for choice in self.service_cls.choices:
-            if choice.multi and not selection[choice.key]:
+            if choice.multi and choice.required and not selection[choice.key]:
                 raise ValueError(f"Pick at least one option under '{choice.label}'.")
         ids: List[str] = []
         if self.ids_entry is not None and self.service_cls.needs_ids(selection):

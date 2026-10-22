@@ -86,6 +86,8 @@ class Choice:
     label: str
     options: Sequence[Tuple[str, str]]
     multi: bool = False
+    default: Optional[Tuple[str, ...]] = None  # None = first option; () = nothing preselected
+    required: bool = True  # multi groups: at least one option must be ticked
 
 
 class HttpClient:
