@@ -99,6 +99,30 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(any("Failed" in line for line in logs))
 
 
+class BatchTest(unittest.TestCase):
+    def test_deletes_batch_before_scanning_next(self):
+        order = []
+
+        class Batched(FakeService):
+            def scan_batches(self, selection, ids):
+                for n in (1, 2):
+                    order.append(f"scan{n}")
+                    yield [Item(str(n), "m", "x")]
+
+            def delete(self, item):
+                order.append(f"del{item.id}")
+
+        svc = Batched([])
+        Runner(svc, {}, [], Filters(), False, (0, 0), svc.stop, lambda _m: None).run()
+        self.assertEqual(order, ["scan1", "del1", "scan2", "del2"])
+
+    def test_stop_before_first_item_deletes_nothing(self):
+        svc = FakeService([Item("1", "m", "x")])
+        svc.stop.set()
+        Runner(svc, {}, [], Filters(), False, (0, 0), svc.stop, lambda _m: None).run()
+        self.assertEqual(svc.deleted, [])
+
+
 class DiscordTest(unittest.TestCase):
     def make(self, pages):
         svc = DiscordService({"token": "x"}, threading.Event(), lambda _m: None)

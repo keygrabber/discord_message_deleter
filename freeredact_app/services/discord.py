@@ -100,25 +100,35 @@ class DiscordService(Service):
             yield from page
             before = page[-1]["id"]
 
-    def scan(self, selection: Dict[str, object], ids: List[str]) -> Iterator[Item]:
-        """Yield own messages and/or own reactions from the chosen channels."""
+    def _channel_items(self, cid: str, what: set) -> Iterator[Item]:
+        """Yield own messages and/or own reactions found in one channel."""
+        for msg in self._history(cid):
+            created = _parse_time(msg.get("timestamp"))
+            if ("messages" in what and msg["author"]["id"] == self.me
+                    and msg.get("type", 0) in DELETABLE_MESSAGE_TYPES):
+                yield Item(msg["id"], "message", msg.get("content") or "[media/embed]",
+                           created, {"channel": cid})
+            if "reactions" in what:
+                for rx in msg.get("reactions") or []:
+                    if not rx.get("me"):
+                        continue
+                    emoji = rx["emoji"]
+                    ref = f"{emoji['name']}:{emoji['id']}" if emoji.get("id") else emoji["name"]
+                    yield Item(f"{msg['id']}/{ref}", "reaction", f"{ref} on {msg['id']}",
+                               created, {"channel": cid, "message": msg["id"], "emoji": ref})
+
+    def scan_batches(self, selection: Dict[str, object],
+                     ids: List[str]) -> Iterator[List[Item]]:
+        """Yield one batch per channel so deleting starts after the first channel."""
         what = set(selection.get("what") or [])
         for cid in self._channel_ids(str(selection.get("scope")), ids):
             self.log(f"--- Channel {cid} ---")
-            for msg in self._history(cid):
-                created = _parse_time(msg.get("timestamp"))
-                if ("messages" in what and msg["author"]["id"] == self.me
-                        and msg.get("type", 0) in DELETABLE_MESSAGE_TYPES):
-                    yield Item(msg["id"], "message", msg.get("content") or "[media/embed]",
-                               created, {"channel": cid})
-                if "reactions" in what:
-                    for rx in msg.get("reactions") or []:
-                        if not rx.get("me"):
-                            continue
-                        emoji = rx["emoji"]
-                        ref = f"{emoji['name']}:{emoji['id']}" if emoji.get("id") else emoji["name"]
-                        yield Item(f"{msg['id']}/{ref}", "reaction", f"{ref} on {msg['id']}",
-                                   created, {"channel": cid, "message": msg["id"], "emoji": ref})
+            yield list(self._channel_items(cid, what))
+
+    def scan(self, selection: Dict[str, object], ids: List[str]) -> Iterator[Item]:
+        """Flat view of `scan_batches`."""
+        for batch in self.scan_batches(selection, ids):
+            yield from batch
 
     def delete(self, item: Item) -> None:
         """Delete a message or remove our reaction; an already-missing target counts as done."""
