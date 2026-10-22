@@ -245,7 +245,8 @@ class Runner:
                  stop: threading.Event, log: Callable[[str], None],
                  progress: Callable[[int, int], None] = lambda done, total: None,
                  on_done: Callable[[], None] = lambda: None,
-                 archive: Optional["Archive"] = None):
+                 archive: Optional["Archive"] = None,
+                 stats: Callable[[int, int, int], None] = lambda found, deleted, failed: None):
         self.service = service
         self.selection = selection
         self.ids = ids
@@ -257,6 +258,7 @@ class Runner:
         self.progress = progress
         self.on_done = on_done
         self.archive = archive
+        self.stats = stats
 
     def run(self) -> None:
         """Entry point for the worker thread; never raises."""
@@ -305,7 +307,9 @@ class Runner:
                     paused = True
                 handled += 1
                 self.progress(handled, found)
+                self.stats(found, deleted, failed)
             self.progress(handled, found)
+            self.stats(found, deleted, failed)
 
         if self.dry_run:
             self.log(f"Preview done. Nothing was deleted ({found} would be).")
