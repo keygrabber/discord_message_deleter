@@ -12,6 +12,7 @@ from ..core import ApiError, Choice, Field, HttpClient, Item, Service
 
 API = "https://discord.com/api/v9"
 TEXT_CHANNEL_TYPES = (0, 5)         # GUILD_TEXT, GUILD_ANNOUNCEMENT
+THREAD_PARENT_TYPES = (0, 5, 15, 16)  # text, announcement, forum, media: channels that hold threads
 DELETABLE_MESSAGE_TYPES = (0, 19, 20, 23)  # default, reply, slash command, context menu
 
 
@@ -30,6 +31,9 @@ class DiscordService(Service):
             ("servers", "All servers"),
             ("selected", "Specific channel / DM IDs"),
         ]),
+        Choice("extras", "Also search", [
+            ("threads", "Threads & forum posts (servers only, slower)"),
+        ], multi=True, default=(), required=False),
     ]
     ids_label = "Channel or DM IDs (comma separated)"
 
@@ -55,7 +59,55 @@ class DiscordService(Service):
         self.me = user["id"]
         return user.get("username", self.me)
 
-    def _channel_ids(self, scope: str, ids: List[str]) -> List[str]:
+    def _guild_channels(self, guild: dict, with_threads: bool) -> List[str]:
+        """Text channel IDs of one server, plus its threads/forum posts if requested."""
+        gid, gname = guild["id"], guild.get("name", guild["id"])
+        rc = self.http.request("GET", f"/guilds/{gid}/channels")
+        if rc.status_code != 200:
+            self.log(f"  Skipping '{gname}': cannot list channels ({rc.status_code})")
+            return []
+        all_channels = rc.json()
+        channels = [c["id"] for c in all_channels if c.get("type") in TEXT_CHANNEL_TYPES]
+        self.log(f"  {gname}: {len(channels)} text channels")
+        if with_threads:
+            parents = [c["id"] for c in all_channels if c.get("type") in THREAD_PARENT_TYPES]
+            threads = self._thread_ids(gid, parents)
+            self.log(f"  {gname}: {len(threads)} threads / forum posts")
+            channels.extend(threads)
+        return channels
+
+    def _thread_ids(self, guild_id: str, parent_ids: List[str]) -> List[str]:
+        """Active threads of a server plus archived public threads of the given channels.
+
+        Failures (missing permission, endpoint refused) are logged and skipped.
+        """
+        found: List[str] = []
+        r = self.http.request("GET", f"/guilds/{guild_id}/threads/active")
+        if r.status_code == 200:
+            found.extend(t["id"] for t in r.json().get("threads", []))
+        else:
+            self.log(f"  Cannot list active threads ({r.status_code}), skipping them.")
+        for pid in parent_ids:
+            before = None
+            while True:
+                params = {"limit": 100}
+                if before:
+                    params["before"] = before
+                r = self.http.request("GET", f"/channels/{pid}/threads/archived/public",
+                                      params=params)
+                if r.status_code != 200:
+                    break
+                data = r.json()
+                threads = data.get("threads", [])
+                found.extend(t["id"] for t in threads)
+                if not threads or not data.get("has_more"):
+                    break
+                before = threads[-1].get("thread_metadata", {}).get("archive_timestamp")
+                if not before:
+                    break
+        return list(dict.fromkeys(found))  # de-duplicate, keep order
+
+    def _channel_ids(self, scope: str, ids: List[str], with_threads: bool = False) -> List[str]:
         """Resolve the list of channel IDs to scan for the chosen scope."""
         if scope == "selected":
             return ids
@@ -74,13 +126,7 @@ class DiscordService(Service):
         self.log(f"Found {len(guilds)} servers.")
         channels: List[str] = []
         for g in guilds:
-            rc = self.http.request("GET", f"/guilds/{g['id']}/channels")
-            if rc.status_code != 200:
-                self.log(f"  Skipping '{g.get('name', g['id'])}': cannot list channels ({rc.status_code})")
-                continue
-            text = [c["id"] for c in rc.json() if c.get("type") in TEXT_CHANNEL_TYPES]
-            self.log(f"  {g.get('name', g['id'])}: {len(text)} text channels")
-            channels.extend(text)
+            channels.extend(self._guild_channels(g, with_threads))
         return channels
 
     def _history(self, channel_id: str) -> Iterator[dict]:
@@ -121,7 +167,8 @@ class DiscordService(Service):
                      ids: List[str]) -> Iterator[List[Item]]:
         """Yield one batch per channel so deleting starts after the first channel."""
         what = set(selection.get("what") or [])
-        for cid in self._channel_ids(str(selection.get("scope")), ids):
+        with_threads = "threads" in (selection.get("extras") or [])
+        for cid in self._channel_ids(str(selection.get("scope")), ids, with_threads):
             self.log(f"--- Channel {cid} ---")
             yield list(self._channel_items(cid, what))
 
