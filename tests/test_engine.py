@@ -1,10 +1,13 @@
 """Offline tests for the engine and services (no network, no GUI). Run: python -m unittest"""
 
+import json
+import tempfile
 import threading
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 
-from freeredact_app.core import ApiError, Filters, HttpClient, Item, Runner, Service
+from freeredact_app.core import ApiError, Archive, Filters, HttpClient, Item, Runner, Service
 from freeredact_app.services.discord import DiscordService
 
 
@@ -103,6 +106,16 @@ class RunnerTest(unittest.TestCase):
         logs = self.run_runner(svc, dry_run=False, filters=Filters(keyword="drop"))
         self.assertEqual(svc.deleted, ["3"])
         self.assertTrue(any("Failed" in line for line in logs))
+
+    def test_archive_records_only_successful_deletions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.jsonl"
+            svc = FakeService([Item("1", "m", "héllo"), Item("2", "m", "bad")], fail_ids=["2"])
+            Runner(svc, {}, [], Filters(), False, (0, 0), svc.stop, lambda _m: None,
+                   archive=Archive(path)).run()
+            records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(r["id"], r["action"], r["text"]) for r in records],
+                         [("1", "deleted", "héllo")])
 
 
 class BatchTest(unittest.TestCase):

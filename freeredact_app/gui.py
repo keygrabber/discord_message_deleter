@@ -3,13 +3,14 @@
 import threading
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from tkinter import messagebox
 from typing import Dict, List, Tuple
 
 import customtkinter as ctk
 
 from . import __version__
-from .core import Filters, Runner
+from .core import Archive, Filters, Runner
 from .services import SERVICES
 
 BG = "#0b0b0d"
@@ -25,6 +26,7 @@ DANGER = "#d9534f"
 DANGER_HOVER = "#b94441"
 LOG_LINES_MAX = 3000
 CONTENT_TYPES = [("attachment", "Files / images"), ("link", "Links"), ("embed", "Embeds")]
+ARCHIVE_DIR = Path.home() / "FreeRedact" / "archives"
 
 
 def F(size: int, bold: bool = False) -> ctk.CTkFont:
@@ -264,6 +266,13 @@ class App:
         ctk.CTkLabel(row, text="to", text_color=SUBTEXT).pack(side="left", padx=10)
         self.delay_max = self._small_entry(row, "3.5")
 
+        archive_card = make_card(form, "Local archive",
+                                 f"Optional private copy of each removed item (JSON Lines) in {ARCHIVE_DIR}")
+        self.archive_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(archive_card, text="Save an archive of this run", variable=self.archive_var,
+                        text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        checkmark_color="#000000", border_color=BORDER).pack(anchor="w")
+
         mode = make_card(form, "Mode")
         mode.grid_columnconfigure((0, 1), weight=1, uniform="m")
         self.preview_card = ModeCard(mode, "\U0001F441", "Preview", "Shows what would be removed. "
@@ -396,11 +405,21 @@ class App:
                 "Confirm", "Deletion mode - matching items will be removed PERMANENTLY.\nContinue?"):
             return
 
+        archive = None
+        if self.archive_var.get():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            try:
+                archive = Archive(ARCHIVE_DIR / f"discord-{stamp}-{self.run_mode.get()}.jsonl")
+            except OSError as exc:
+                messagebox.showerror("Archive", f"Cannot create archive file: {exc}")
+                return
+
         service = SERVICES[self.current](creds, self.stop_flag, self.log)
         runner = Runner(service, selection, ids, filters, dry_run, (lo, hi), self.stop_flag,
                         self.log,
                         progress=lambda d, t: self.root.after(0, self._set_progress, d, t),
-                        on_done=lambda: self.root.after(0, self._finished))
+                        on_done=lambda: self.root.after(0, self._finished),
+                        archive=archive)
         self.stop_flag.clear()
         self.running = True
         self.start_btn.configure(state="disabled")
