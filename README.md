@@ -23,7 +23,15 @@ pip install -r requirements.txt
 python deleter.py
 ```
 
-On Linux you may also need Tk (`sudo apt install python3-tk`, `sudo pacman -S tk` or `sudo dnf install python3-tkinter`).
+On Linux install Tk first, and add `--break-system-packages` to pip if your distro refuses a system-wide install:
+
+```bash
+sudo pacman -S tk                  # Arch
+sudo apt install python3-tk        # Debian/Ubuntu
+sudo dnf install python3-tkinter   # Fedora
+
+pip install -r requirements.txt --break-system-packages
+```
 
 Always start with **Preview** and read the log before switching to **Deletion**.
 
