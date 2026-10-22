@@ -1,13 +1,13 @@
-# freeredact
+# Deleter
 
 Open-source Redact-style cleaner (customtkinter GUI), focused on Discord: removes the user's own messages and reactions.
-Repo: https://github.com/keygrabber/freeredact (default branch `main`).
+Repo: https://github.com/keygrabber/discord_message_deleter (default branch `main`).
 
 ## Layout
-- `freeredact.py` — thin launcher (`freeredact_app.gui.main`).
-- `freeredact_app/core.py` — `Item` (with content `tags`), `Filters` (keyword, dates, content types), `Archive` (JSONL), `Field`/`Choice` (GUI declarations), `HttpClient` (timeouts, bounded retries, stop-aware 429 waits), `Service` base class, `Runner` (processes `scan_batches` one batch / channel at a time, deletes as it goes, never dies silently).
-- `freeredact_app/services/discord.py` — Discord API logic (the app is Discord-only; the `Service` base class keeps it extensible).
-- `freeredact_app/gui.py` — sidebar + per-service forms generated from service declarations; worker thread runs `Runner.run`.
+- `deleter.py` — thin launcher (`deleter_app.gui.main`).
+- `deleter_app/core.py` — `Item` (with content `tags`), `Filters` (keyword, dates, content types), `Archive` (JSONL), `Field`/`Choice` (GUI declarations), `HttpClient` (timeouts, bounded retries, stop-aware 429 waits), `Service` base class, `Runner` (processes `scan_batches` one batch / channel at a time, deletes as it goes, never dies silently).
+- `deleter_app/services/discord.py` — Discord API logic (the app is Discord-only; the `Service` base class keeps it extensible).
+- `deleter_app/gui.py` — sidebar + per-service forms generated from service declarations; worker thread runs `Runner.run`.
 - `tests/` — offline `unittest` tests (fake responses, no network, no GUI): `python -m unittest`.
 
 ## Rules
@@ -36,4 +36,4 @@ Repo: https://github.com/keygrabber/freeredact (default branch `main`).
 
 ## Caveats
 - Nothing has been run against the live Discord API (only fake responses). The threads endpoints (`/guilds/{id}/threads/active`, `.../threads/archived/public`) are documented for bots and may be refused for user tokens; failures are logged and skipped. Test with Preview first.
-- Never commit anything under `~/FreeRedact/archives` — archives contain message text.
+- Never commit anything under `~/Deleter/archives` — archives contain message text.

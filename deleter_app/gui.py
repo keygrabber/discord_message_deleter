@@ -28,7 +28,7 @@ GOOD = "#43b581"
 WARN = "#faa61a"
 LOG_LINES_MAX = 3000
 CONTENT_TYPES = [("attachment", "Files / images"), ("link", "Links"), ("embed", "Embeds")]
-ARCHIVE_DIR = Path.home() / "FreeRedact" / "archives"
+ARCHIVE_DIR = Path.home() / "Deleter" / "archives"
 
 
 LOG_COLORS = {"preview": "#8ea1ff", "ok": GOOD, "bad": DANGER, "warn": WARN, "dim": SUBTEXT}
@@ -281,7 +281,7 @@ class App:
 
     def __init__(self, root: ctk.CTk):
         self.root = root
-        root.title(f"FreeRedact {__version__}")
+        root.title(f"Deleter {__version__}")
         root.configure(fg_color=BG)
         root.minsize(960, 720)
         w, h = 1100, 860
@@ -306,7 +306,7 @@ class App:
         side = ctk.CTkFrame(self.root, width=220, fg_color=SIDEBAR_BG, corner_radius=0)
         side.grid(row=0, column=0, sticky="ns")
         side.grid_propagate(False)
-        ctk.CTkLabel(side, text="FreeRedact", font=F(20, True), text_color=TEXT).pack(
+        ctk.CTkLabel(side, text="Deleter", font=F(20, True), text_color=TEXT).pack(
             anchor="w", padx=20, pady=(24, 0))
         ctk.CTkLabel(side, text="Clean up your own activity", font=F(11),
                      text_color=SUBTEXT).pack(anchor="w", padx=20, pady=(0, 22))
@@ -567,6 +567,6 @@ class App:
 def main() -> None:
     """Create the window (stable WM class for tiling-WM rules) and run it."""
     ctk.set_appearance_mode("dark")
-    root = ctk.CTk(className="FreeRedact")
+    root = ctk.CTk(className="Deleter")
     App(root)
     root.mainloop()

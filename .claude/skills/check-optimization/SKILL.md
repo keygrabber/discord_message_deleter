@@ -1,11 +1,11 @@
 ---
 name: check-optimization
-description: Review freeredact code for performance, robustness and UI-thread safety problems and propose or apply fixes. Use when the user asks to optimize, review, speed up or clean up the code.
+description: Review deleter code for performance, robustness and UI-thread safety problems and propose or apply fixes. Use when the user asks to optimize, review, speed up or clean up the code.
 ---
 
 # Check code optimization
 
-Read `freeredact_app/` (core, services, gui) fully, then check each area and report findings as `file:line — problem — fix`, most important first. Apply fixes only if the user asks; otherwise propose them.
+Read `deleter_app/` (core, services, gui) fully, then check each area and report findings as `file:line — problem — fix`, most important first. Apply fixes only if the user asks; otherwise propose them.
 
 ## Checklist
 - **Network**: one shared `requests.Session` with headers set once; every call has `timeout=`; 429 handling uses `retry_after` with a bounded retry loop (not a single retry); network exceptions (`requests.RequestException`) are caught so the worker never dies silently.
