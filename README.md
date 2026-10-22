@@ -1,62 +1,44 @@
-# Deleter - Discord message deleter
+# Deleter
 
-Open-source, local alternative to [Redact](https://redact.dev), built specifically for **Discord**: bulk-remove your own messages and reactions from DMs, servers or chosen channels, with filters, a preview mode and a dark GUI. Everything runs on your machine; your token is never stored.
+A small, open-source, local alternative to [Redact](https://redact.dev) for **Discord**. It bulk-removes your own messages and reactions from DMs, servers or chosen channels. Everything runs on your machine and your token is never saved.
 
 ![Deleter GUI](docs/screenshot.png)
 
-Features:
+- Clean all DMs, all servers, servers you pick, or specific channel/DM IDs (threads and forum posts optional)
+- Filter by text, date range, or messages with files, links or embeds
+- **Preview** mode shows what would be removed without touching anything
+- Random pacing, rate-limit handling, live progress, Stop button
+- Optional local archive of removed items (JSON Lines in `~/Deleter/archives`)
 
-- Remove your **messages** and **reactions** from all DMs, all servers, servers you pick from a list, or specific channel/DM IDs (optionally including threads and forum posts).
-- Filters: contains text, date range, only messages with files, links or embeds.
-- **Preview** mode shows what would be removed without touching anything.
-- Works channel by channel, so deletion starts right away and Stop keeps what was already done.
-- Random pacing, automatic rate-limit and network-error handling, progress bar, Stop button.
-- Optional local archive (JSON Lines) of every removed item in `~/Deleter/archives`.
-
-> **Warning:** automating a user account (a Discord user token) violates Discord's Terms of Service. Use at your own risk and never share your token.
-
-## Install
-
-```bash
-# Arch
-sudo pacman -S tk
-# Debian/Ubuntu
-sudo apt install python3-tk
-# Fedora
-sudo dnf install python3-tkinter
-
-pip install -r requirements.txt --break-system-packages   # Linux
-pip install -r requirements.txt                           # Windows
-```
+> **Warning:** automating a user account violates Discord's Terms of Service. Use at your own risk and never share your token.
 
 ## Run
 
-On Windows just double-click **`Deleter.bat`**: it opens the window without a terminal (and installs the packages on the first start). From a shell:
+**Windows:** double-click `Deleter.bat` (no terminal, installs packages on first start). To get a single shareable file, run `build_exe.bat` once and use `dist\Deleter.exe`.
+
+**Anywhere:**
 
 ```bash
+pip install -r requirements.txt
 python deleter.py
 ```
 
-### Standalone `.exe` (Windows)
+On Linux install Tk first, and add `--break-system-packages` to pip if your distro refuses a system-wide install:
 
-Run **`build_exe.bat`** once. It builds `dist\Deleter.exe` with PyInstaller, a single file you can share; it needs no Python to run.
+```bash
+sudo pacman -S tk                  # Arch
+sudo apt install python3-tk        # Debian/Ubuntu
+sudo dnf install python3-tkinter   # Fedora
 
-Always start with **Preview** mode and check the log before switching to **Deletion**.
+pip install -r requirements.txt --break-system-packages
+```
 
-## Tests
+Always start with **Preview** and read the log before switching to **Deletion**.
+
+## Development
 
 ```bash
 python -m unittest
 ```
 
-## Checking that it works (safe, step by step)
-
-1. `python -m unittest` should print `OK`.
-2. `python deleter.py` should open the window. Switch between the options and watch the form change (the ID box appears only for "By ID", the server list only for "Choose servers").
-3. Paste your token, keep **Preview** mode, choose "All DMs" and press **Start preview**. The log should say `Logged in as <your name>`, list `[PREVIEW]` lines and finish with "Nothing was deleted". Nothing is changed in this mode.
-4. Try a narrow **Deletion** run first: "By ID" with one test DM, then check in Discord that only your own messages from there are gone.
-5. Turn on "Save an archive of this run" if you want a local copy of what was removed.
-
-## Architecture
-
-`deleter_app/core.py` holds the service-independent engine (HTTP client with retries, filters, runner), `deleter_app/services/discord.py` the Discord API logic and `deleter_app/gui.py` the customtkinter front-end.
+`deleter_app/core.py` is the engine (HTTP client, filters, runner), `deleter_app/services/discord.py` the Discord logic, `deleter_app/gui.py` the customtkinter GUI and `deleter_app/anim.py` the animation helpers.
