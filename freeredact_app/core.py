@@ -163,6 +163,7 @@ class Service:
     credentials: List[Field] = []
     choices: List[Choice] = []
     ids_label = ""  # when set, the GUI shows an ID box for `needs_ids` selections
+    picker_choice: Optional[Tuple[str, str]] = None  # (choice key, option value) that shows a pick-list
 
     def __init__(self, creds: Dict[str, str], stop: threading.Event,
                  log: Callable[[str], None]):
@@ -181,6 +182,10 @@ class Service:
 
     def scan(self, selection: Dict[str, object], ids: List[str]) -> Iterator[Item]:
         """Yield every candidate item. Must not delete anything."""
+        raise NotImplementedError
+
+    def list_choices(self) -> List[Tuple[str, str]]:
+        """Return (id, label) pairs the user can tick when `picker_choice` is active."""
         raise NotImplementedError
 
     def scan_batches(self, selection: Dict[str, object],

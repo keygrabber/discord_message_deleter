@@ -135,6 +135,73 @@ class ServicePanel(ctk.CTkFrame):
                                           placeholder_text="e.g. 111222333444555666, 222333444555666777")
             self.ids_entry.pack(fill="x")
 
+        self.picker_vars: Dict[str, tk.BooleanVar] = {}
+        self.picker_box = None
+        if service_cls.picker_choice:
+            self.picker_box = ctk.CTkFrame(target, fg_color="transparent")
+            bar = ctk.CTkFrame(self.picker_box, fg_color="transparent")
+            bar.pack(fill="x", pady=(10, 4))
+            self.load_btn = ctk.CTkButton(bar, text="Load my servers", width=140, height=30,
+                                          fg_color=CARD_BG_SELECTED, hover_color=BORDER,
+                                          text_color=TEXT, command=self._load_choices)
+            self.load_btn.pack(side="left")
+            for text, state in (("All", True), ("None", False)):
+                ctk.CTkButton(bar, text=text, width=50, height=30, fg_color="transparent",
+                              hover_color=CARD_BG_SELECTED, text_color=SUBTEXT,
+                              command=lambda s=state: self._set_all_picked(s)
+                              ).pack(side="left", padx=(8, 0))
+            self.picker_list = ctk.CTkScrollableFrame(self.picker_box, height=150, fg_color=BG,
+                                                      border_width=1, border_color=BORDER)
+            self.picker_list.pack(fill="x")
+            ctk.CTkLabel(self.picker_list, text="Enter your token, then press 'Load my servers'.",
+                         font=F(11), text_color=SUBTEXT).pack(anchor="w")
+
+    def _picker_active(self) -> bool:
+        """True when the current selection is the one that shows the pick-list."""
+        if not self.service_cls.picker_choice:
+            return False
+        key, value = self.service_cls.picker_choice
+        return self.selection().get(key) == value
+
+    def _load_choices(self) -> None:
+        """Fetch the pick-list (e.g. servers) in a background thread."""
+        creds = {k: e.get() for k, e in self.entries.items()}
+        if any(not creds[f.key].strip() for f in self.service_cls.credentials):
+            messagebox.showerror("Check the form", "Fill in your credentials first.")
+            return
+        self.load_btn.configure(state="disabled", text="Loading...")
+
+        def work():
+            try:
+                service = self.service_cls(creds, threading.Event(), lambda _m: None)
+                service.login()
+                self.after(0, self._show_choices, service.list_choices(), None)
+            except Exception as exc:  # shown to the user, never fatal
+                self.after(0, self._show_choices, [], str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_choices(self, options: List[Tuple[str, str]], error) -> None:
+        """Fill the pick-list with checkboxes (main thread)."""
+        self.load_btn.configure(state="normal", text="Load my servers")
+        for child in self.picker_list.winfo_children():
+            child.destroy()
+        self.picker_vars = {}
+        if error or not options:
+            ctk.CTkLabel(self.picker_list, text=error or "Nothing found.", font=F(11),
+                         text_color=DANGER).pack(anchor="w")
+            return
+        for ident, label in options:
+            self.picker_vars[ident] = tk.BooleanVar(value=False)
+            ctk.CTkCheckBox(self.picker_list, text=label, variable=self.picker_vars[ident],
+                            text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                            checkmark_color="#000000", border_color=BORDER).pack(anchor="w", pady=2)
+
+    def _set_all_picked(self, state: bool) -> None:
+        """Tick or untick every entry of the pick-list."""
+        for var in self.picker_vars.values():
+            var.set(state)
+
     def _toggle_secrets(self) -> None:
         """Show/hide all secret fields."""
         for fld in self.service_cls.credentials:
@@ -155,6 +222,11 @@ class ServicePanel(ctk.CTkFrame):
         State and placeholder are configured separately on purpose: CTkEntry only
         applies a placeholder update while it is in the "normal" state.
         """
+        if self.picker_box is not None:
+            if self._picker_active():
+                self.picker_box.pack(fill="x")
+            else:
+                self.picker_box.pack_forget()
         if self.ids_entry is None:
             return
         needed = self.service_cls.needs_ids(self.selection())
@@ -174,7 +246,11 @@ class ServicePanel(ctk.CTkFrame):
             if choice.multi and choice.required and not selection[choice.key]:
                 raise ValueError(f"Pick at least one option under '{choice.label}'.")
         ids: List[str] = []
-        if self.ids_entry is not None and self.service_cls.needs_ids(selection):
+        if self._picker_active():
+            ids = [ident for ident, var in self.picker_vars.items() if var.get()]
+            if not ids:
+                raise ValueError("Load your servers and tick at least one.")
+        elif self.ids_entry is not None and self.service_cls.needs_ids(selection):
             ids = [i.strip() for i in self.ids_entry.get().split(",") if i.strip()]
             if not ids:
                 raise ValueError("Paste at least one ID.")

@@ -172,6 +172,16 @@ class DiscordTest(unittest.TestCase):
                          [("message", "10"), ("reaction", "10/party:77")])
         self.assertEqual(items[0].created, datetime(2024, 5, 1, 10, tzinfo=timezone.utc))
 
+    def test_picked_scope_only_scans_chosen_servers(self):
+        svc, _ = self.make([])
+        guilds = [{"id": "g1", "name": "Zeta"}, {"id": "g2", "name": "alpha"}]
+        routes = {"/users/@me/guilds": guilds,
+                  "/guilds/g1/channels": [{"id": "c1", "type": 0}],
+                  "/guilds/g2/channels": [{"id": "c2", "type": 0}]}
+        svc.http.request = lambda method, path, **kw: FakeResponse(200, routes[path])
+        self.assertEqual(svc._channel_ids("picked", ["g2"]), ["c2"])
+        self.assertEqual(svc.list_choices(), [("g2", "alpha"), ("g1", "Zeta")])
+
     def test_server_scope_adds_threads_only_when_requested(self):
         svc, _ = self.make([])
         archived = {"threads": [{"id": "t2", "thread_metadata": {
