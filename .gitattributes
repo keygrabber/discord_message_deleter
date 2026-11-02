@@ -4,5 +4,8 @@
 # Windows batch files must stay CRLF.
 *.bat text eol=crlf
 
+# Shell scripts must stay LF, or the shebang breaks.
+*.sh text eol=lf
+
 # Binary files.
 *.png binary

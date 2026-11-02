@@ -16,6 +16,8 @@ A small, open-source, local alternative to [Redact](https://redact.dev) for **Di
 
 **Windows:** double-click `Deleter.bat` (no terminal, installs packages on first start). To get a single shareable file, run `build_exe.bat` once and use `dist\Deleter.exe`.
 
+**Arch Linux:** run `./Deleter.sh`. On first start it installs `python` and `tk` with pacman if they are missing, then the packages into a local `.venv`, so no `--break-system-packages` is needed. The app detaches from the terminal, which closes on its own, and a **Deleter** entry is added to your application menu to start it with no terminal at all. To see startup errors, run `.venv/bin/python deleter.py`.
+
 **Anywhere:**
 
 ```bash
